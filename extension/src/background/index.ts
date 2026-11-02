@@ -21,6 +21,7 @@ import {
   authState,
   completeSignIn,
   getActiveWorkspaceId,
+  getMe,
   getServerUrl,
   loadMe,
   setActiveWorkspace,
@@ -78,8 +79,7 @@ async function afterSignIn() {
 }
 
 setWorkspaceUpdatedHandler(async () => {
-  await loadMe().catch(() => undefined);
-  await syncContentScripts().catch(() => undefined);
+  await refreshMemberships().catch(() => undefined);
   await broadcastAuth();
 });
 
@@ -90,6 +90,21 @@ function setupMenusAndAlarms() {
   });
   chrome.alarms.create('pp-poll', { periodInMinutes: 1 });
   chrome.alarms.create('pp-drafts-prune', { periodInMinutes: 60 * 24 });
+}
+
+/** Re-fetch /me; when the list of workspaces changed, re-sync everything that depends on it. */
+async function refreshMemberships(): Promise<void> {
+  const before = (await getMe())?.memberships.map((m) => m.workspace.id + ':' + m.member.role).join(',');
+  const prevActive = await getActiveWorkspaceId();
+  const me = await loadMe();
+  await chrome.storage.session.set({ 'pp.meCheckedAt': Date.now() }).catch(() => undefined);
+  const after = me?.memberships.map((m) => m.workspace.id + ':' + m.member.role).join(',');
+  if (before !== after || prevActive !== (await getActiveWorkspaceId())) {
+    await syncContentScripts().catch(() => undefined);
+    reconnectSoon();
+    await broadcastAuth();
+    void injectIntoOpenTabs();
+  }
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -112,6 +127,9 @@ chrome.alarms.onAlarm.addListener(async (a) => {
     void flush();
     void connect();
     await refreshBadge(true).catch(() => undefined);
+    // Pick up workspaces joined elsewhere (web app, invite links, another device).
+    const last = ((await chrome.storage.session.get('pp.meCheckedAt').catch(() => ({}))) as Record<string, unknown>)['pp.meCheckedAt'] as number | undefined;
+    if (!last || Date.now() - last > 5 * 60_000) await refreshMemberships().catch(() => undefined);
   } else if (a.name === 'pp-drafts-prune') {
     await pruneDrafts();
   }
@@ -390,8 +408,7 @@ async function handle(req: BgRequest | LocalRequest, sender: chrome.runtime.Mess
       void injectIntoOpenTabs();
       return null;
     case 'workspace.refresh':
-      await loadMe();
-      await syncContentScripts().catch(() => undefined);
+      await refreshMemberships();
       await broadcastAuth();
       return authState({ pendingWrites: await pendingCount(), online: isOnline() });
     case 'api':

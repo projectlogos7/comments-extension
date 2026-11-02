@@ -54,7 +54,7 @@ export function WorkspaceSwitcher() {
         }
       },
     })),
-    { label: 'New workspace…', icon: 'plus' as const, separator: true, onSelect: () => host.navigate('/onboarding') },
+    { label: 'Create or join a workspace…', icon: 'plus' as const, separator: true, onSelect: () => host.navigate('/onboarding') },
   ];
   return (
     <Menu label="Switch workspace" align="start" buttonClass="pp-ws-switcher" items={items}>
@@ -171,6 +171,24 @@ export function Onboarding() {
   const [invited, setInvited] = useState(0);
   const hasWorkspaces = (session.me?.memberships.length ?? 0) > 0;
   const first = session.me?.user.name?.split(' ')[0];
+  const [checking, setChecking] = useState(!hasWorkspaces);
+
+  // Never ask someone to create a workspace before re-checking: they may already be on a team
+  // (invite accepted on sign-in, or joined from another device).
+  useEffect(() => {
+    if (hasWorkspaces) return;
+    let live = true;
+    host
+      .refreshSession()
+      .then((s) => {
+        if (live && (s.me?.memberships.length ?? 0) > 0 && step === 'create') host.navigate('/all');
+      })
+      .catch(() => undefined)
+      .finally(() => live && setChecking(false));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const create = async () => {
     setBusy(true);
@@ -203,7 +221,13 @@ export function Onboarding() {
         ))}
       </ol>
 
-      {step === 'create' && (
+      {step === 'create' && checking && (
+        <div class="pp-card pp-onboard-card" aria-busy="true">
+          <p class="pp-muted">Finding your workspaces…</p>
+        </div>
+      )}
+
+      {step === 'create' && !checking && (
         <div class="pp-card pp-onboard-card">
           <h1 class="pp-h1">{first ? `Welcome, ${first}` : 'Welcome to Pinpoint'}</h1>
           <p class="pp-muted">A workspace holds your team, the sites you review and every comment. You can rename it later.</p>
@@ -236,10 +260,19 @@ export function Onboarding() {
               <button class="pp-btn">Join</button>
             </form>
           </details>
-          {hasWorkspaces && (
+          {hasWorkspaces ? (
             <button class="pp-link-btn pp-small" onClick={() => host.navigate('/all')}>
               Cancel
             </button>
+          ) : (
+            session.me && (
+              <p class="pp-muted pp-small">
+                Signed in as {session.me.user.email}. Invited with a different email?{' '}
+                <button class="pp-link-btn pp-small" onClick={() => void host.signOut()}>
+                  Use another account
+                </button>
+              </p>
+            )
           )}
         </div>
       )}

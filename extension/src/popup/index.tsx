@@ -111,13 +111,97 @@ function SignIn({ state, onDone }: { state: AuthState; onDone: () => void }) {
   );
 }
 
-function CreateWorkspace({ onDone }: { onDone: () => void }) {
+/** Pull an invite token out of a pasted link (…/app/#/invite/<token>) or a bare token. */
+function inviteTokenFrom(input: string): string | null {
+  const v = input.trim();
+  if (!v) return null;
+  const m = v.match(/invite\/([A-Za-z0-9_-]{8,})/);
+  if (m) return m[1];
+  return /^[A-Za-z0-9_-]{8,}$/.test(v) ? v : null;
+}
+
+function JoinWorkspace({ onDone, onCancel }: { onDone: () => void; onCancel?: () => void }) {
+  const [link, setLink] = useState('');
+  const [preview, setPreview] = useState<{ token: string; workspaceName: string; role: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function check(e: Event) {
+    e.preventDefault();
+    const token = inviteTokenFrom(link);
+    if (!token) return setErr('Paste the invite link you received.');
+    setBusy(true);
+    setErr(null);
+    try {
+      const p = await api<{ workspaceName: string; role: string }>('previewInvite', token);
+      setPreview({ token, ...p });
+    } catch (e2) {
+      setErr((e2 as Error).message || 'That invite link is not valid any more.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function join() {
+    if (!preview) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const m = await api<Membership>('acceptInvite', preview.token);
+      await bg({ type: 'workspace.refresh' });
+      await bg({ type: 'workspace.setActive', workspaceId: m.workspace.id });
+      onDone();
+    } catch (e2) {
+      setErr((e2 as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="stack tight">
+      {!preview ? (
+        <form class="stack tight" onSubmit={check}>
+          <label class="lbl" for="join-link">Invite link</label>
+          <input id="join-link" placeholder="Paste the link from your invite" value={link} onInput={(e) => setLink(e.currentTarget.value)} autoFocus />
+          <div class="row">
+            <button class="btn primary grow" disabled={busy || !link.trim()}>
+              {busy ? <Spinner /> : null} Continue
+            </button>
+            {onCancel && (
+              <button type="button" class="btn" onClick={onCancel}>
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      ) : (
+        <div class="stack tight panel">
+          <p>
+            Join <strong>{preview.workspaceName}</strong> as {preview.role}?
+          </p>
+          <div class="row">
+            <button class="btn primary grow" disabled={busy} onClick={join}>
+              {busy ? <Spinner /> : null} Join workspace
+            </button>
+            <button class="btn" onClick={() => setPreview(null)}>
+              Back
+            </button>
+          </div>
+        </div>
+      )}
+      {err && <p class="err" role="alert">{err}</p>}
+    </div>
+  );
+}
+
+function CreateWorkspace({ onDone, onCancel }: { onDone: () => void; onCancel?: () => void }) {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
     <form
-      class="stack"
+      class="stack tight"
       onSubmit={async (e) => {
         e.preventDefault();
         if (!name.trim()) return;
@@ -135,18 +219,142 @@ function CreateWorkspace({ onDone }: { onDone: () => void }) {
         }
       }}
     >
+      <label class="lbl" for="ws-name">Workspace name</label>
+      <input id="ws-name" placeholder="e.g. Acme Web Team" value={name} onInput={(e) => setName(e.currentTarget.value)} autoFocus />
+      <div class="row">
+        <button class="btn primary grow" disabled={busy || !name.trim()}>
+          {busy ? <Spinner /> : null} Create workspace
+        </button>
+        {onCancel && (
+          <button type="button" class="btn" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+      </div>
+      {err && <p class="err" role="alert">{err}</p>}
+    </form>
+  );
+}
+
+/** Shown only after a fresh check found no workspaces: join first, create second. */
+function NoWorkspace({ email, onDone }: { email: string; onDone: () => void }) {
+  const [mode, setMode] = useState<'choose' | 'join' | 'create'>('choose');
+  return (
+    <div class="stack">
       <div class="hero">
         <Logo />
-        <h1>Name your workspace</h1>
-        <p class="muted">Your team’s comments live here. You can invite people next.</p>
+        <h1>{mode === 'create' ? 'Name your workspace' : 'Join your team'}</h1>
+        <p class="muted">
+          Signed in as <strong>{email}</strong>. You’re not in a workspace yet.
+        </p>
       </div>
-      <input aria-label="Workspace name" placeholder="e.g. Acme Web Team" value={name} onInput={(e) => setName(e.currentTarget.value)} autoFocus />
-      <button class="btn primary block" disabled={busy || !name.trim()}>
-        {busy ? <Spinner /> : null} Create workspace
+      {mode === 'choose' && (
+        <>
+          <button class="btn primary block" onClick={() => setMode('join')}>
+            I have an invite link
+          </button>
+          <button class="btn block" onClick={() => setMode('create')}>
+            Create a new workspace
+          </button>
+          <button class="link small" style={{ alignSelf: 'center' }} onClick={() => void bg({ type: 'workspace.refresh' }).then(onDone)}>
+            Check again
+          </button>
+        </>
+      )}
+      {mode === 'join' && <JoinWorkspace onDone={onDone} onCancel={() => setMode('choose')} />}
+      {mode === 'create' && <CreateWorkspace onDone={onDone} onCancel={() => setMode('choose')} />}
+      <p class="muted small center-text">
+        Invited with another email?{' '}
+        <button class="link small" onClick={() => void bg({ type: 'auth.signOut' }).then(onDone)}>
+          Use a different account
+        </button>
+      </p>
+    </div>
+  );
+}
+
+const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', member: 'Member', guest: 'Guest' };
+
+/** Workspace navigation: current workspace + menu to switch, join or create. */
+function WorkspaceMenu({ memberships, activeId, onSwitch, onJoin, onCreate }: {
+  memberships: Membership[];
+  activeId: string;
+  onSwitch: (id: string) => void;
+  onJoin: () => void;
+  onCreate: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const active = memberships.find((m) => m.workspace.id === activeId) ?? memberships[0];
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+        (ref.current?.querySelector('.ws-trigger') as HTMLElement | null)?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    (ref.current?.querySelector('.ws-item[aria-checked="true"]') as HTMLElement | null)?.focus();
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  function onListKey(e: KeyboardEvent) {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const items = [...(ref.current?.querySelectorAll<HTMLElement>('.ws-item') ?? [])];
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+  }
+
+  return (
+    <div class="ws-menu" ref={ref}>
+      <button class="ws-trigger" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)} title="Switch workspace">
+        <span class="ws-avatar" aria-hidden="true">{active.workspace.name.slice(0, 1).toUpperCase()}</span>
+        <span class="ws-name">{active.workspace.name}</span>
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5l3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
       </button>
-      {err && <p class="err" role="alert">{err}</p>}
-      <p class="muted small center-text">Got an invite? Open the invite link from your email.</p>
-    </form>
+      {open && (
+        <div class="ws-list" role="menu" aria-label="Workspaces" onKeyDown={onListKey}>
+          <div class="ws-heading">Workspaces</div>
+          {memberships.map((m) => (
+            <button
+              class="ws-item"
+              role="menuitemradio"
+              aria-checked={m.workspace.id === active.workspace.id}
+              onClick={() => {
+                setOpen(false);
+                if (m.workspace.id !== active.workspace.id) onSwitch(m.workspace.id);
+              }}
+            >
+              <span class="ws-avatar" aria-hidden="true">{m.workspace.name.slice(0, 1).toUpperCase()}</span>
+              <span class="ws-item-text">
+                <span class="ws-item-name">{m.workspace.name}</span>
+                <span class="ws-item-role">{ROLE_LABEL[m.member.role] ?? m.member.role}</span>
+              </span>
+              {m.workspace.id === active.workspace.id && (
+                <svg class="ws-check" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="m3 7.5 2.5 2.5L11 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              )}
+            </button>
+          ))}
+          <div class="ws-sep" role="separator" />
+          <button class="ws-item" role="menuitem" onClick={() => { setOpen(false); onJoin(); }}>
+            <span class="ws-plus" aria-hidden="true">↳</span> Join with invite link
+          </button>
+          <button class="ws-item" role="menuitem" onClick={() => { setOpen(false); onCreate(); }}>
+            <span class="ws-plus" aria-hidden="true">+</span> Create workspace
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -239,10 +447,19 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [shortcut, setShortcut] = useState<string | null>(null);
 
-  async function load() {
+  const [checked, setChecked] = useState(false);
+  const [sheet, setSheet] = useState<'join' | 'create' | null>(null);
+
+  async function load(fresh = false) {
     try {
-      const s = await bg<AuthState>({ type: 'auth.state' });
+      let s = await bg<AuthState>({ type: 'auth.state' });
       setState(s);
+      if (s.signedIn && (fresh || !checked)) {
+        // The cached account can be stale (joined a team on the web or another device): re-check.
+        s = await bg<AuthState>({ type: 'workspace.refresh' }).catch(() => s);
+        setState(s);
+        setChecked(true);
+      }
       if (s.signedIn) {
         bg<PageInfo>({ type: 'page.info' }).then(setPage, () => setPage(null));
         bg<UnreadCounts>({ type: 'badge.refresh' }).then(setCounts, () => undefined);
@@ -279,7 +496,28 @@ function App() {
 
   const me = state.me;
   const ms = me.memberships.find((m) => m.workspace.id === state.activeWorkspaceId) ?? me.memberships[0];
-  if (!ms) return <CreateWorkspace onDone={() => void load()} />;
+  if (!ms && !checked)
+    return (
+      <div class="center stack tight">
+        <Spinner />
+        <p class="muted small">Finding your workspaces…</p>
+      </div>
+    );
+  if (!ms) return <NoWorkspace email={me.user.email} onDone={() => void load(true)} />;
+  if (sheet)
+    return (
+      <div class="stack">
+        <div class="hero">
+          <Logo small />
+          <h1>{sheet === 'join' ? 'Join a workspace' : 'Create a workspace'}</h1>
+        </div>
+        {sheet === 'join' ? (
+          <JoinWorkspace onDone={() => { setSheet(null); void load(true); }} onCancel={() => setSheet(null)} />
+        ) : (
+          <CreateWorkspace onDone={() => { setSheet(null); void load(true); }} onCancel={() => setSheet(null)} />
+        )}
+      </div>
+    );
 
   const ws = ms.workspace;
   const isAdmin = can(ms.member.role, 'manageSites');
@@ -343,22 +581,16 @@ function App() {
     <div class="stack">
       <header class="top">
         <Logo small />
-        {me.memberships.length > 1 ? (
-          <select
-            aria-label="Workspace"
-            value={ws.id}
-            onChange={async (e) => {
-              await bg({ type: 'workspace.setActive', workspaceId: e.currentTarget.value });
-              await load();
-            }}
-          >
-            {me.memberships.map((m) => (
-              <option value={m.workspace.id}>{m.workspace.name}</option>
-            ))}
-          </select>
-        ) : (
-          <strong class="wsname">{ws.name}</strong>
-        )}
+        <WorkspaceMenu
+          memberships={me.memberships}
+          activeId={ws.id}
+          onSwitch={async (id) => {
+            await bg({ type: 'workspace.setActive', workspaceId: id });
+            await load();
+          }}
+          onJoin={() => setSheet('join')}
+          onCreate={() => setSheet('create')}
+        />
         <span class="grow" />
         <button
           class="icon"

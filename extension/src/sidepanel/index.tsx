@@ -132,9 +132,14 @@ function Panel({ host }: { host: ExtensionHost }) {
   if (!membership) {
     body = (
       <Empty title="No workspace yet">
-        <button class="pp-btn pp-btn-primary" onClick={() => chrome.tabs.create({ url: host.appUrl('/onboarding') })}>
-          Create or join a workspace
-        </button>
+        <div class="pp-row">
+          <button class="pp-btn pp-btn-primary" onClick={() => chrome.tabs.create({ url: host.appUrl('/onboarding') })}>
+            Create or join a workspace
+          </button>
+          <button class="pp-btn" onClick={() => void host.refreshSession().catch((e) => toast(errorMessage(e), 'error'))}>
+            Check again
+          </button>
+        </div>
       </Empty>
     );
   } else if (tab === 'inbox') {

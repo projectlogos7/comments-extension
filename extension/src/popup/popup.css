@@ -69,3 +69,22 @@ kbd { font: 600 11px ui-monospace, monospace; background: rgba(255,255,255,.22);
 .spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: inline-block; animation: s .7s linear infinite; }
 @keyframes s { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2s; } .btn { transition: none; } }
+
+/* Workspace navigation */
+.center.stack { flex-direction: column; align-items: center; }
+.ws-menu { position: relative; min-width: 0; }
+.ws-trigger { display: flex; align-items: center; gap: 7px; max-width: 200px; height: 32px; padding: 0 8px 0 4px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--fg); font: inherit; font-weight: 650; cursor: pointer; }
+.ws-trigger:hover, .ws-trigger[aria-expanded="true"] { background: var(--bg2); border-color: var(--border); }
+.ws-trigger:focus-visible, .ws-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ws-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-avatar { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
+.ws-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; width: 248px; max-height: 320px; overflow: auto; padding: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.14); }
+.ws-heading { padding: 6px 8px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--faint); }
+.ws-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 7px; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.ws-item:hover, .ws-item:focus { background: var(--bg2); outline: none; }
+.ws-item-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ws-item-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-item-role { font-size: 11.5px; color: var(--muted); }
+.ws-check { color: var(--accent); flex: none; }
+.ws-plus { display: inline-grid; place-items: center; width: 22px; height: 22px; color: var(--muted); font-weight: 600; }
+.ws-sep { height: 1px; margin: 4px 2px; background: var(--border); }

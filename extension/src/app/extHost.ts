@@ -83,7 +83,11 @@ export class ExtensionHost implements UiHost {
   }
 
   static async create(): Promise<ExtensionHost> {
-    return new ExtensionHost(await bg<AuthState>({ type: 'auth.state' }));
+    const cached = await bg<AuthState>({ type: 'auth.state' });
+    if (!cached.signedIn) return new ExtensionHost(cached);
+    // Re-check memberships so a team joined elsewhere shows up instead of an empty state.
+    const fresh = await bg<AuthState | undefined>({ type: 'workspace.refresh' }).catch(() => undefined);
+    return new ExtensionHost(fresh && 'signedIn' in fresh ? fresh : cached);
   }
 
   emit(e: UiEvent) {
