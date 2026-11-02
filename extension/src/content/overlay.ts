@@ -31,13 +31,13 @@ export function deepElementAt(x: number, y: number, host: Host): Hit | null {
   let oy = 0;
   let el: Element | null = null;
   for (let guard = 0; guard < 12; guard++) {
-    const list = (root as Document).elementsFromPoint(x - ox, y - oy).filter((e) => !isOurs(e, host));
+    const list: Element[] = (root as Document).elementsFromPoint(x - ox, y - oy).filter((e) => !isOurs(e, host));
     const next: Element | undefined = list[0];
     if (!next || next === el) break;
     el = next;
-    const sr = (el as HTMLElement).shadowRoot;
+    const sr: ShadowRoot | null = (el as HTMLElement).shadowRoot;
     if (sr && sr.mode === 'open' && 'elementsFromPoint' in sr) {
-      const inner = sr.elementsFromPoint(x - ox, y - oy).find((e) => e !== el);
+      const inner = sr.elementsFromPoint(x - ox, y - oy).find((e: Element) => e !== el);
       if (inner && sr.contains(inner)) {
         root = sr;
         continue;
@@ -45,7 +45,7 @@ export function deepElementAt(x: number, y: number, host: Host): Hit | null {
     }
     if (el.tagName === 'IFRAME') {
       try {
-        const doc = (el as HTMLIFrameElement).contentDocument;
+        const doc: Document | null = (el as HTMLIFrameElement).contentDocument;
         if (doc && doc.documentElement) {
           const r = el.getBoundingClientRect();
           const cs = getComputedStyle(el);

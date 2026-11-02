@@ -92,7 +92,7 @@ export function registerThreadRoutes(app: FastifyInstance, ctx: AppCtx) {
       `SELECT p.*, count(t.id)::int AS thread_count, count(t.id) FILTER (WHERE t.status = 'open')::int AS open_count
        FROM pages p JOIN threads t ON t.page_id = p.id AND t.deleted_at IS NULL ${threadFilter}
        WHERE p.workspace_id = $1 ${extra}
-       GROUP BY p.id ORDER BY p.site, p.path`,
+       GROUP BY p.id ORDER BY p.site, p.path, p.normalized_url`,
       params,
     );
     return rows.map((r) => ({ ...toPage(r), threadCount: r.thread_count, openCount: r.open_count }));

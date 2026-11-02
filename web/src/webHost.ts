@@ -1,7 +1,8 @@
 import { ApiClient, type AuthTokens, type Me, type RealtimeEvent } from '@pinpoint/shared';
 import { copyToClipboard, liveThreadUrl, localDrafts, type Session, type UiEvent, type UiHost } from '@pinpoint/ui';
 
-const TOKENS_KEY = 'pp.web.tokens';
+// Shared with the server-rendered share viewer so sessions carry across.
+const TOKENS_KEY = 'pinpoint.auth';
 const WS_KEY = 'pp.web.activeWorkspace';
 
 interface StoredTokens extends AuthTokens {

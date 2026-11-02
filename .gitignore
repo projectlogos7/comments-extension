@@ -6,3 +6,4 @@ server/public/app/
 .env
 .DS_Store
 coverage/
+extension/*.zip

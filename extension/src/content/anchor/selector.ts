@@ -10,11 +10,11 @@ export function cssEscape(value: string): string {
   for (let i = 0; i < value.length; i++) {
     const ch = value[i];
     const code = value.charCodeAt(i);
-    if (code === 0) out += '�';
+    if (code === 0) out += '\uFFFD';
     else if ((code >= 0x1 && code <= 0x1f) || code === 0x7f || (i === 0 && code >= 48 && code <= 57) || (i === 1 && code >= 48 && code <= 57 && value[0] === '-'))
       out += '\\' + code.toString(16) + ' ';
     else if (i === 0 && ch === '-' && value.length === 1) out += '\\-';
-    else if (/[a-zA-Z0-9_\- -￿]/.test(ch)) out += ch;
+    else if (/[a-zA-Z0-9_-]/.test(ch) || code >= 0xa0) out += ch;
     else out += '\\' + ch;
   }
   return out;
@@ -268,8 +268,8 @@ export function resolveRoot(doc: Document, frames: string[] = [], shadowHosts: s
   }
   let root: QueryRoot = d;
   for (const h of shadowHosts) {
-    const host = root.querySelector(h);
-    const sr = host?.shadowRoot;
+    const host: Element | null = root.querySelector(h);
+    const sr: ShadowRoot | null | undefined = host?.shadowRoot;
     if (!sr) return null;
     root = sr;
   }

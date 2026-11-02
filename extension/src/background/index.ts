@@ -14,6 +14,7 @@ import {
 } from '@pinpoint/shared';
 import { FOCUS_THREAD_KEY, LOCAL_TYPES, TAB_ANCHORS_KEY, type LocalRequest } from '../lib/local-messages';
 import { blobToDataUrl, dataUrlToBlob } from '../lib/dataurl';
+import { withThreadParam } from '../lib/thread-param';
 import {
   activeWorkspace,
   api,
@@ -201,11 +202,6 @@ async function runTabCommand(tabId: number, command: TabCommand): Promise<unknow
   return res;
 }
 
-function withThreadParam(url: string, threadId: string): string {
-  const u = new URL(url);
-  u.searchParams.set('pinpoint_thread', threadId);
-  return u.toString();
-}
 
 async function openOnPage(threadId: string, url: string, newTab = false) {
   const target = normalizeUrl(url).url;
