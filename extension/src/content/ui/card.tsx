@@ -1,10 +1,13 @@
-// Compact in-page thread card: read, reply, resolve, copy (PRD §12 "Thread card").
-import { useEffect, useState } from 'preact/hooks';
+// In-page thread card (PRD §12 "Thread card"): read, reply, resolve, copy. Draggable; Esc closes.
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Comment, CopyFormat, Member, Rect, ThreadDetail, User } from '@pinpoint/shared';
-import { can, draftKey, renderBody, type Role } from '@pinpoint/shared';
+import { can, decodeMentions, draftKey, renderBody, type Role } from '@pinpoint/shared';
 import { api, bg } from '../../lib/messaging';
-import { Avatar, Editor, type PendingAttachment } from './editor';
+import { Avatar, Editor, toStoredBody, type PendingAttachment } from './editor';
 import { COPY_LABELS } from '../copy';
+import { useDraggable, type Pos } from './drag';
+import { pushLayer } from './layers';
+import { MenuButton, type MenuItem } from './popover';
 
 export interface CardProps {
   threadId: string;
@@ -21,31 +24,91 @@ export interface CardProps {
   onChanged: () => void;
 }
 
+const CARD_W = 368;
+
 function timeAgo(iso: string) {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
   if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d`;
   return new Date(iso).toLocaleDateString();
 }
 
-function CommentView({ c, canDelete, onDelete }: { c: Comment; canDelete: boolean; onDelete: () => void }) {
-  if (c.deletedAt) return <div class="muted">Comment deleted</div>;
+function cardPos(r: Rect | null): Pos {
+  if (!r) return { left: innerWidth - CARD_W - 24, top: 72 };
+  let left = r.x + r.w + 16;
+  if (left + CARD_W > innerWidth - 8) left = Math.max(8, r.x - CARD_W - 16);
+  const top = Math.min(Math.max(8, r.y), Math.max(8, innerHeight - 460));
+  return { left: Math.round(left), top: Math.round(top) };
+}
+
+const Dots = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+    <g fill="currentColor"><circle cx="3" cy="8" r="1.4" /><circle cx="8" cy="8" r="1.4" /><circle cx="13" cy="8" r="1.4" /></g>
+  </svg>
+);
+
+function CommentView(p: {
+  c: Comment;
+  canEdit: boolean;
+  canDelete: boolean;
+  members: Member[];
+  onDelete: () => void;
+  onSaveEdit: (body: string) => Promise<void>;
+  onError: (m: string) => void;
+}) {
+  const { c } = p;
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState('');
+  const [atts, setAtts] = useState<PendingAttachment[]>([]);
+  if (c.deletedAt) return <div class="cmt deleted muted">Comment deleted</div>;
+  const items: MenuItem[] = [];
+  if (p.canEdit) items.push({ label: 'Edit', onSelect: () => (setText(decodeMentions(c.body)), setEditing(true)) });
+  if (p.canDelete) items.push({ label: 'Delete', danger: true, onSelect: p.onDelete });
   return (
     <div class="cmt">
-      <Avatar name={c.author.name || c.author.email} url={c.author.avatarUrl} />
-      <div style="flex:1;min-width:0">
+      <Avatar name={c.author.name || c.author.email} url={c.author.avatarUrl} size={26} />
+      <div class="cmt-main">
         <div class="meta">
-          <b>{c.author.name}</b> · {timeAgo(c.createdAt)}
-          {c.editedAt ? ' · edited' : ''}
-          {canDelete && (
-            <button type="button" class="icon" style="float:right;width:20px;height:20px" aria-label="Delete comment" title="Delete" onClick={onDelete}>
-              🗑
-            </button>
+          <b>{c.author.name || c.author.email}</b>
+          <span class="muted">
+            {timeAgo(c.createdAt)}
+            {c.editedAt ? ' · edited' : ''}
+          </span>
+          <span class="grow" />
+          {items.length > 0 && !editing && (
+            <MenuButton label="Comment actions" items={items} class="icon xs">
+              <Dots />
+            </MenuButton>
           )}
         </div>
-        <div class="text" dangerouslySetInnerHTML={{ __html: renderBody(c.body) }} />
+        {editing ? (
+          <Editor
+            label="Edit comment"
+            value={text}
+            onChange={setText}
+            members={p.members}
+            autoFocus
+            attachments={atts}
+            onAttachments={setAtts}
+            onError={p.onError}
+            onSubmit={() => void p.onSaveEdit(toStoredBody(text, p.members)).then(() => setEditing(false))}
+            minHeight={40}
+            actions={
+              <>
+                <button type="button" class="btn sm ghost" onClick={() => setEditing(false)}>
+                  Cancel
+                </button>
+                <button type="button" class="btn sm primary" disabled={!text.trim()} onClick={() => void p.onSaveEdit(toStoredBody(text, p.members)).then(() => setEditing(false))}>
+                  Save
+                </button>
+              </>
+            }
+          />
+        ) : (
+          <div class="text" dangerouslySetInnerHTML={{ __html: renderBody(c.body) }} />
+        )}
         {c.attachments.length > 0 && (
           <div class="imgs">
             {c.attachments.map((a) => (
@@ -66,9 +129,13 @@ export function ThreadCard(p: CardProps) {
   const [reply, setReply] = useState('');
   const [atts, setAtts] = useState<PendingAttachment[]>([]);
   const [sending, setSending] = useState(false);
-  const [menu, setMenu] = useState(false);
-  const [pos, setPos] = useState({ left: 0, top: 0 });
   const key = draftKey({ workspaceId: p.workspaceId, threadId: p.threadId });
+  const drag = useDraggable(() => cardPos(p.anchorRect()));
+  const replyRef = useRef(reply);
+  replyRef.current = reply;
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => pushLayer(() => p.onClose()), []);
 
   async function load() {
     try {
@@ -85,39 +152,35 @@ export function ThreadCard(p: CardProps) {
     bg<string | null>({ type: 'drafts.get', key }).then((v) => v && setReply(v)).catch(() => undefined);
     const onChange = () => void load();
     window.addEventListener('pinpoint:thread-changed', onChange);
-    return () => window.removeEventListener('pinpoint:thread-changed', onChange);
+    return () => {
+      window.removeEventListener('pinpoint:thread-changed', onChange);
+      void bg({ type: 'drafts.set', key, value: replyRef.current.trim() ? replyRef.current : null }).catch(() => undefined);
+    };
   }, [p.threadId]);
 
   useEffect(() => {
-    const tm = setTimeout(() => bg({ type: 'drafts.set', key, value: reply || null }).catch(() => undefined), 400);
+    const tm = setTimeout(() => bg({ type: 'drafts.set', key, value: reply.trim() ? reply : null }).catch(() => undefined), 500);
     return () => clearTimeout(tm);
   }, [reply]);
-
-  useEffect(() => {
-    const place = () => {
-      const r = p.anchorRect();
-      const W = 360;
-      if (!r) return setPos({ left: innerWidth - W - 24, top: 72 });
-      let left = r.x + r.w + 16;
-      if (left + W > innerWidth - 8) left = Math.max(8, r.x - W - 16);
-      const top = Math.min(Math.max(8, r.y), Math.max(8, innerHeight - 440));
-      setPos({ left, top });
-    };
-    place();
-    window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
-  }, []);
 
   async function send() {
     if (sending || (!reply.trim() && !atts.length)) return;
     setSending(true);
+    setError(null);
     try {
-      const r = await bg<Comment | { queued: true }>({ type: 'comment.create', threadId: p.threadId, body: reply.trim(), attachments: atts.map((a) => ({ name: a.name, dataUrl: a.dataUrl })) });
+      const r = await bg<Comment | { queued: true }>({
+        type: 'comment.create',
+        threadId: p.threadId,
+        body: toStoredBody(reply, p.members),
+        attachments: atts.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
+      });
       setReply('');
+      replyRef.current = '';
       setAtts([]);
       await bg({ type: 'drafts.set', key, value: null }).catch(() => undefined);
       if ('queued' in r) setError('Saved offline — it will sync when you are back online.');
       await load();
+      requestAnimationFrame(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight }));
       p.onChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -148,88 +211,134 @@ export function ThreadCard(p: CardProps) {
     }
   }
 
+  async function edit(c: Comment, body: string) {
+    try {
+      await api('editComment', c.id, body);
+      await load();
+      p.onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+      throw e;
+    }
+  }
+
   const resolveAllowed = t && (can(p.role, 'resolveAny') || (can(p.role, 'resolveOwn') && t.createdBy === p.me.id));
+  const area = t?.snapshots.find((s) => s.kind === 'area');
+
+  const moreItems: MenuItem[] = t
+    ? [
+        ...(Object.keys(COPY_LABELS) as CopyFormat[]).map((f) => ({ label: `Copy ${COPY_LABELS[f]}`, onSelect: () => p.onCopy(t, f) })),
+        {
+          label: 'Copy share link',
+          separatorBefore: true,
+          onSelect: async () => {
+            try {
+              const s = await api<{ url: string }>('shareThread', t.id);
+              p.onCopyText(s.url, 'Link copied');
+            } catch (e) {
+              setError((e as Error).message);
+            }
+          },
+        },
+        { label: 'Open in side panel', onSelect: () => void bg({ type: 'sidepanel.open', threadId: p.threadId }).catch(() => undefined) },
+        ...(p.detached ? [{ label: 'Re-attach to an element', onSelect: p.onReattach }] : []),
+      ]
+    : [];
 
   return (
-    <div class="card" role="dialog" aria-label={t ? `Comment thread #${t.number}` : 'Comment thread'} style={`left:${pos.left}px;top:${pos.top}px`}>
-      <div class="hdr" style="position:relative">
-        <span class="title">{t ? `#${t.number}` : 'Loading…'}</span>
-        {t && <span class={`chip ${t.status}`}>{t.status === 'open' ? 'Open' : 'Resolved'}</span>}
-        {p.detached && <span class="chip detached">Detached</span>}
-        {t && <span class="chip">{t.scope}</span>}
-        <button type="button" class="icon" aria-label="Copy as…" aria-haspopup="menu" aria-expanded={menu} title="Copy as" onClick={() => setMenu(!menu)}>
-          ⧉
+    <div
+      ref={drag.ref}
+      class={`card card-ui ${drag.dragging ? 'dragging' : ''}`}
+      role="dialog"
+      aria-label={t ? `Comment thread #${t.number}` : 'Comment thread'}
+      style={`left:${drag.pos.left}px;top:${drag.pos.top}px;width:${CARD_W}px`}
+    >
+      <div class="hdr drag-handle" {...drag.handleProps} title="Drag to move · double-click to reset">
+        <span class={`num ${t?.status ?? 'open'}`}>{t ? t.number : '…'}</span>
+        <div class="hdr-text">
+          <span class="title">{t ? (t.status === 'open' ? 'Open' : 'Resolved') : 'Loading…'}</span>
+          {t && (
+            <span class="sub">
+              {t.scope}
+              {p.detached ? ' · detached' : ''}
+              {t.assignee ? ` · → ${t.assignee.name}` : ''}
+            </span>
+          )}
+        </div>
+        <span class="grow" />
+        {t && resolveAllowed && (
+          <button
+            type="button"
+            class={`btn sm ${t.status === 'open' ? 'resolve' : 'ghost'}`}
+            onClick={() => void setStatus(t.status === 'open' ? 'resolved' : 'open')}
+            title={t.status === 'open' ? 'Mark as resolved' : 'Reopen thread'}
+          >
+            {t.status === 'open' ? '✓ Resolve' : 'Reopen'}
+          </button>
+        )}
+        {t && (
+          <MenuButton label="More actions" items={moreItems}>
+            <Dots />
+          </MenuButton>
+        )}
+        <button type="button" class="icon" aria-label="Close (Esc)" title="Close (Esc)" onClick={p.onClose}>
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
         </button>
-        <button type="button" class="icon" aria-label="Open in side panel" title="Open in side panel" onClick={() => bg({ type: 'sidepanel.open', threadId: p.threadId }).catch(() => undefined)}>
-          ⇥
-        </button>
-        <button type="button" class="icon" aria-label="Close" onClick={p.onClose}>
-          ✕
-        </button>
-        {menu && t && (
-          <div class="menu" role="menu">
-            {(Object.keys(COPY_LABELS) as CopyFormat[]).map((f) => (
-              <button type="button" role="menuitem" onClick={() => { setMenu(false); p.onCopy(t, f); }}>
-                Copy {COPY_LABELS[f]}
-              </button>
-            ))}
-            <hr />
-            <button type="button" role="menuitem" onClick={async () => {
-              setMenu(false);
-              try {
-                const s = await api<{ url: string }>('shareThread', t.id);
-                p.onCopyText(s.url, 'Link copied');
-              } catch (e) {
-                setError((e as Error).message);
-              }
-            }}>
-              Copy link
+      </div>
+      <div class="body" ref={listRef}>
+        {error && (
+          <div class="err" role="alert">
+            {error}
+          </div>
+        )}
+        {p.detached && (
+          <div class="notice-inline">
+            <span class="grow">The element this comment pointed at was not found. The snapshot shows what the reviewer saw.</span>
+            <button type="button" class="btn sm" onClick={p.onReattach}>
+              Re-attach
             </button>
           </div>
         )}
-      </div>
-      <div class="body">
-        {error && <div class="err" role="alert">{error}</div>}
-        {p.detached && (
-          <div class="row">
-            <span class="muted grow">The element this comment pointed at was not found. The snapshot shows what the reviewer saw.</span>
-            <button type="button" class="btn sm" onClick={p.onReattach}>Re-attach</button>
-          </div>
-        )}
-        {t?.snapshots.find((s) => s.kind === 'area') && (
-          <a href={t.snapshots.find((s) => s.kind === 'area')!.url} target="_blank" rel="noopener noreferrer">
-            <img class="thumb" src={t.snapshots.find((s) => s.kind === 'area')!.url} alt="Snapshot of the commented area" />
+        {area && (
+          <a href={area.url} target="_blank" rel="noopener noreferrer" class="thumb-link">
+            <img class="thumb" src={area.url} alt="Snapshot of the commented area" />
           </a>
         )}
+        {!t && !error && <div class="skeleton" aria-hidden="true" />}
         {t?.comments.map((c, i) => (
-          <CommentView c={c} canDelete={c.authorId === p.me.id || can(p.role, 'deleteAny')} onDelete={() => void del(c, i === 0)} />
+          <CommentView
+            key={c.id}
+            c={c}
+            members={p.members}
+            canEdit={c.authorId === p.me.id}
+            canDelete={c.authorId === p.me.id || can(p.role, 'deleteAny')}
+            onDelete={() => void del(c, i === 0)}
+            onSaveEdit={(body) => edit(c, body)}
+            onError={setError}
+          />
         ))}
-        {t && (
+      </div>
+      {t && (
+        <div class="ftr reply">
           <Editor
             label="Reply"
-            placeholder="Reply… (@ to mention)"
+            placeholder="Reply… type @ to mention"
             value={reply}
             onChange={setReply}
             members={p.members}
             attachments={atts}
             onAttachments={setAtts}
             onSubmit={() => void send()}
-            onCancel={p.onClose}
             onError={setError}
+            minHeight={38}
+            actions={
+              <button type="button" class="btn sm primary" disabled={sending || (!reply.trim() && !atts.length)} onClick={() => void send()}>
+                {sending ? 'Sending…' : 'Reply'}
+              </button>
+            }
           />
-        )}
-      </div>
-      <div class="ftr">
-        {t && resolveAllowed && (
-          <button type="button" class="btn" onClick={() => void setStatus(t.status === 'open' ? 'resolved' : 'open')}>
-            {t.status === 'open' ? '✓ Resolve' : 'Reopen'}
-          </button>
-        )}
-        <span class="grow" />
-        <button type="button" class="btn primary" disabled={sending || (!reply.trim() && !atts.length)} onClick={() => void send()}>
-          {sending ? 'Sending…' : 'Reply'}
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

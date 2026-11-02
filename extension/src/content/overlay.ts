@@ -123,8 +123,10 @@ export class Overlay {
     this.bar.innerHTML = '';
     const t = document.createElement('span');
     t.textContent = opts.title ?? 'Click an element or drag an area';
+    t.style.fontWeight = '600';
     const hints = document.createElement('span');
-    hints.innerHTML = '<kbd>Shift</kbd>+click multi · <kbd>↑</kbd><kbd>↓</kbd> parent/child · dbl-click section · <kbd>Esc</kbd> exit';
+    hints.className = 'hints';
+    hints.innerHTML = '<kbd>↑</kbd><kbd>↓</kbd> parent/child · <kbd>Shift</kbd>-click add · <kbd>Esc</kbd> cancel';
     const cancel = document.createElement('button');
     cancel.textContent = 'Cancel';
     cancel.onclick = () => this.exit();

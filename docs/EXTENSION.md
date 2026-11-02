@@ -43,6 +43,51 @@ The generic `{ type: 'api', method, args }` request calls any `ApiClient` method
 message boundary: pass `{ __dataUrl: 'data:…' }` for a Blob argument, or `{ …, blob: 'data:…' }`
 for `uploadSnapshot`'s input. Bulk export goes through `export.download` (uses `chrome.downloads`).
 
+## In-page UI
+
+Everything the extension draws lives in one shadow root (`src/content/host.ts`, styles in `src/content/styles.ts`).
+
+- **Composer** (`ui/composer.tsx`). This is a compact card beside the selection, with the scope switch (Area / Section / Page), the text box and **Comment**.
+  - Type, priority, assignee, "Show on" and the snapshot options sit under **Options**.
+  - Drag the card by its header. Double-click the header to put it back beside the selection. The card stays fully on screen when it grows or the window shrinks.
+- **Thread card** (`ui/card.tsx`). Clicking a pin opens it. It uses the same style and is also draggable. It has Resolve and a **⋯** menu with the copy-as options, share link, side panel and re-attach. Each comment has its own edit/delete menu.
+- **Mentions** (`ui/editor.tsx`). Text boxes always show `@Ana Lopez`. Mentions are stored as `@[Ana Lopez](userId)` tokens:
+  - typing uses `activeMentionQuery` and `insertMention` from `@pinpoint/shared`;
+  - saving uses `encodeMentions`;
+  - editing an existing comment uses `decodeMentions`.
+  - The picker shows initials, name and email, and is driven by ↑/↓, Enter or Tab, and Esc.
+- **Dropdowns** (`ui/popover.tsx`). Every menu (mention picker, type/priority/assignee/"Show on", ⋯ menus) is a floating `position: fixed` popover.
+  - It is placed against its trigger, flipping above or below and shifting to stay in the viewport.
+  - It overlays the card instead of being clipped by it or pushing the layout.
+  - Native `<select>`s are replaced by an accessible listbox/menu with keyboard navigation.
+- **Esc** (`ui/layers.ts`). Every open layer registers on one stack, and a capture-phase `keydown` listener on `window` closes only the topmost one. The order is dropdown → blur editor → composer or thread card → in-page panel. Comment mode handles its own Esc.
+  - It works with focus in a text box and stops the page from also seeing the key.
+  - Closing the composer keeps the draft (FR-2.12).
+
+## Keyboard shortcut (Alt+Shift+C)
+
+The shortcut toggles comment mode, through the same path as the context menu:
+
+1. The command grants `activeTab`, so the content script is injected on an allowed site even without the optional host permission.
+2. If Pinpoint can't start, the reason is shown on the page and the popup opens with the fix. The possible reasons are:
+   - not signed in;
+   - no workspace;
+   - the site isn't enabled;
+   - a browser page.
+   Before this change these failures were swallowed, and the shortcut seemed to do nothing.
+3. If Chrome did not assign the shortcut (another extension already uses it), the keystroke reaches the page. The content script then handles Alt+Shift+C itself, matching on `event.code` because macOS Option changes `event.key`. The popup also shows **Set shortcut**, which opens `chrome://extensions/shortcuts`.
+4. **Fixed: content script came back inert after an extension reload or update.** The re-injected script found the old instance's `__pinpointContent` flag and exited, so commands got no answer. Now a new instance only defers to an old one that is still connected, and orphaned instances remove their UI.
+
+## Popup
+
+The popup offers one main action, **Comment on this page** (with the current shortcut shown), plus Page comment and Hide pins.
+
+- **Site not enabled yet:**
+  - Admins get one button: **Enable Pinpoint on &lt;host&gt;**. It requests host access inside the click and adds the host to the workspace's allowed sites.
+  - Members are told to ask an admin.
+- **Admins** also get **Invite teammates**: emails, comma separated, plus **Copy invite link**. The link reuses the existing invite token and only creates one if none exists.
+- **First run:** sign in, then a single "Name your workspace" step.
+
 ## Anchoring (FR-1.10 – FR-1.12)
 
 `src/content/anchor/` is pure DOM code with unit tests (`extension/test/anchor.test.ts`).

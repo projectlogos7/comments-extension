@@ -110,10 +110,16 @@ export class Pins {
     }
     const pin = it.pin;
     pin.className = `pin ${t.status}${t.unread ? ' unread' : ''}`;
-    pin.textContent = String(t.number);
-    const first = t.firstComment ? excerpt(t.firstComment.body, 80) : '';
+    const first = t.firstComment ? excerpt(t.firstComment.body, 90) : '';
+    const tip = document.createElement('span');
+    tip.className = 'pin-tip';
+    tip.setAttribute('aria-hidden', 'true');
+    const who = document.createElement('b');
+    who.textContent = t.author?.name ?? '';
+    tip.append(who, document.createTextNode(first ? ` ${first}` : ''));
+    pin.replaceChildren(document.createTextNode(String(t.number)), tip);
     pin.setAttribute('aria-label', `Comment ${t.number}, ${t.status}${t.unread ? ', unread' : ''}, by ${t.author?.name ?? 'unknown'}: ${first}`);
-    pin.title = `#${t.number} ${t.author?.name ?? ''}: ${first}`;
+    pin.removeAttribute('title');
   }
 
   schedule = () => {
@@ -166,6 +172,7 @@ export class Pins {
       const py = Math.min(Math.max(r.y, 14), vh - 14);
       const offscreen = r.y + r.h < 0 || r.y > vh || r.x + r.w < 0 || r.x > vw;
       it.pin.style.display = offscreen ? 'none' : 'block';
+      it.pin.classList.toggle('tip-left', px > innerWidth - 300);
       it.pin.style.left = `${px}px`;
       it.pin.style.top = `${py}px`;
       if (it.outline) {

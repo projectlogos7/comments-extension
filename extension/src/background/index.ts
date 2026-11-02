@@ -148,17 +148,72 @@ chrome.tabs.onUpdated.addListener(async (tabId, info) => {
   chrome.tabs.remove(tabId).catch(() => undefined);
 });
 
-chrome.commands.onCommand.addListener(async (command, tab) => {
+// Keyboard shortcut (Alt+Shift+C) and context menu share one path. Both grant activeTab, so on an
+// allowed site we can inject even without the optional host permission. Failures used to be
+// swallowed silently, which made the shortcut look broken; now the user always sees why.
+chrome.commands.onCommand.addListener((command, tab) => {
   if (command !== 'toggle-comment-mode') return;
-  const t = tab ?? (await activeTab());
-  if (t?.id != null) await runTabCommand(t.id, { kind: 'commentMode.toggle' }).catch(() => undefined);
+  void startFromGesture(tab, { kind: 'commentMode.toggle' });
 });
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (tab?.id == null) return;
+chrome.contextMenus.onClicked.addListener((info, tab) => {
   const command: TabCommand = info.menuItemId === 'pp-page-comment' ? { kind: 'pageComment.start' } : { kind: 'commentMode.start' };
-  await runTabCommand(tab.id, command).catch(() => undefined);
+  void startFromGesture(tab, command);
 });
+
+async function startFromGesture(tab: chrome.tabs.Tab | undefined, command: TabCommand) {
+  const t = tab?.id != null ? tab : await activeTab();
+  if (t?.id == null) return;
+  try {
+    await runTabCommand(t.id, command);
+  } catch (e) {
+    const why = await explainUnavailable(t);
+    await showPageToast(t.id, why ?? (e as Error).message);
+    // Open the popup, which offers the fix (sign in, create workspace, enable this site).
+    try {
+      await (chrome.action as unknown as { openPopup?: () => Promise<void> }).openPopup?.();
+    } catch {
+      /* not supported or no focused window: the toast is enough */
+    }
+  }
+}
+
+/** A human explanation of why Pinpoint cannot start on this tab, or null if it should work. */
+async function explainUnavailable(tab: chrome.tabs.Tab): Promise<string | null> {
+  const url = tab.url ?? '';
+  if (!/^https?:/.test(url)) return 'Pinpoint can’t run on this page. Open a website to comment.';
+  if (!(await accessToken())) return 'Sign in to Pinpoint to comment on this page. Click the Pinpoint icon.';
+  const ws = await activeWorkspace();
+  if (!ws) return 'Create a Pinpoint workspace first. Click the Pinpoint icon.';
+  if (!(await isUrlAllowed(url))) return `Pinpoint isn’t enabled on ${new URL(url).host} yet. Click the Pinpoint icon to enable it.`;
+  return null;
+}
+
+/** Show a short message on the page itself (works on any http(s) tab while activeTab is granted). */
+async function showPageToast(tabId: number, message: string) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      args: [message],
+      func: (msg: string) => {
+        const id = 'pinpoint-shortcut-toast';
+        document.getElementById(id)?.remove();
+        const d = document.createElement('div');
+        d.id = id;
+        d.setAttribute('role', 'status');
+        d.textContent = msg;
+        d.style.cssText =
+          'all:initial;position:fixed;z-index:2147483647;left:50%;bottom:20px;transform:translateX(-50%);max-width:480px;' +
+          'background:rgba(24,24,30,.95);color:#f2f2f6;font:500 13px/1.45 system-ui,-apple-system,sans-serif;padding:10px 16px;' +
+          'border-radius:9px;box-shadow:0 10px 30px -6px rgba(0,0,0,.4);';
+        (document.body || document.documentElement).appendChild(d);
+        setTimeout(() => d.remove(), 4500);
+      },
+    });
+  } catch {
+    /* restricted page (chrome://, Web Store): nothing we can draw */
+  }
+}
 
 chrome.notifications?.onClicked.addListener(async (id) => {
   const target = notificationTarget(id);

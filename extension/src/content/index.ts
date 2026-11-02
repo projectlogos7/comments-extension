@@ -31,17 +31,35 @@ import { buildAnchor, describeRange, rangeViewportRect, sectionCandidates, viewp
 import { COPY_LABELS, copyText, writeClipboard } from './copy';
 import { installCaptureHandlers } from './capture-handlers';
 import { takeThreadParam } from '../lib/thread-param';
+import { installEscapeHandler, pushLayer } from './ui/layers';
 
 declare global {
   interface Window {
     __pinpointContent?: boolean;
+    /** Returns false once the instance that set it lost its extension context (extension reloaded). */
+    __pinpointAlive?: () => boolean;
+  }
+}
+
+/** Is this content-script instance still connected to the extension? */
+function extensionAlive(): boolean {
+  try {
+    return !!chrome.runtime?.id;
+  } catch {
+    return false;
   }
 }
 
 
 (function main() {
-  if (window.top !== window || window.__pinpointContent) return;
+  if (window.top !== window) return;
+  // A previous instance may be orphaned (extension reloaded/updated): its globals survive in this
+  // isolated world but it can no longer talk to the extension. Only skip if it is still alive,
+  // otherwise re-injection would silently do nothing (one reason the shortcut "did not work").
+  if (window.__pinpointContent && window.__pinpointAlive?.()) return;
   window.__pinpointContent = true;
+  window.__pinpointAlive = extensionAlive;
+  installEscapeHandler();
 
   let auth: AuthState | null = null;
   let membership: Membership | null = null;
@@ -60,6 +78,7 @@ declare global {
   let sectionRaf = 0;
   let openCardId: string | null = null;
   const patchedDetached = new Set<string>();
+  let noSnapshotHinted = false;
 
   // ------------------------------------------------------------ setup
   function ensureHost(): Host {
@@ -246,7 +265,10 @@ declare global {
   async function openComposer(sel: Selection) {
     if (!membership || !auth?.me) return;
     const capture = await captureViewport();
-    if (!capture.dataUrl) toast('No snapshot this time: start comment mode from the toolbar, the right-click menu or Alt+Shift+C to include one.', { ms: 5000 });
+    if (!capture.dataUrl && !noSnapshotHinted) {
+      noSnapshotHinted = true;
+      toast('This comment won’t include a snapshot. Start from the toolbar or Alt+Shift+C to capture one.', { ms: 4000 });
+    }
     const component = sel.elements[0] ? detectComponent(sel.elements[0]).catch(() => null) : Promise.resolve(null);
     const mem = await getMembers();
     mount(
@@ -432,13 +454,17 @@ declare global {
 
   // ------------------------------------------------------------ in-page panel fallback
   let panel: HTMLDivElement | null = null;
+  let popPanelLayer: (() => void) | null = null;
   async function togglePanel() {
     const hst = ensureHost();
     if (panel) {
       panel.remove();
       panel = null;
+      popPanelLayer?.();
+      popPanelLayer = null;
       return;
     }
+    popPanelLayer = pushLayer(() => void togglePanel());
     let tabId = '';
     try {
       tabId = String((await bg<PageInfo>({ type: 'page.info' })).tabId);
@@ -556,8 +582,29 @@ declare global {
     return false;
   });
 
+  // ------------------------------------------------------------ keyboard fallback
+  // Chrome normally handles Alt+Shift+C as an extension command. If the shortcut is unassigned or
+  // taken by another extension, the keystroke reaches the page; handle it here. event.code is used
+  // because on macOS Option changes event.key (Option+Shift+C types "Ç").
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || e.code !== 'KeyC' || e.repeat) return;
+      if (!extensionAlive()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void runCommand({ kind: 'commentMode.toggle' }).catch((err) => toast((err as Error).message, { kind: 'error' }));
+    },
+    true,
+  );
+
   // ------------------------------------------------------------ SPA navigation
   function onUrlChange() {
+    if (!extensionAlive()) {
+      // Orphaned after an extension reload: remove our UI so the new instance owns the page.
+      teardown();
+      return;
+    }
     if (location.href === lastUrl) return;
     lastUrl = location.href;
     closeUi();

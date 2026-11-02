@@ -1,5 +1,6 @@
 // Blur tool (FR-4.10): draw boxes over the captured viewport image; they are pixelated before saving.
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { pushLayer } from './layers';
 import type { Rect } from '@pinpoint/shared';
 
 interface Props {
@@ -48,6 +49,7 @@ export function BlurEditor(p: Props) {
   const [busy, setBusy] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => pushLayer(() => p.onCancel()), []);
 
   function toCss(e: MouseEvent) {
     const img = imgRef.current!;
