@@ -15,3 +15,5 @@ export * from './components/Settings';
 export * from './components/AllComments';
 export * from './components/AppShell';
 export * from './clipboard';
+export * from './components/Share';
+export * from './components/Invite';

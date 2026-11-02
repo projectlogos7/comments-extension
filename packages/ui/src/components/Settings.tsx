@@ -15,13 +15,15 @@ import {
 } from '@pinpoint/shared';
 import { errorMessage, useActiveMembership, useAsync, useUi } from '../context';
 import { webAppUrl } from '../host';
-import { Avatar, capitalize, downloadBlob, Empty, ErrorBox, Field, RelTime, Skeleton, Toggle } from './common';
+import { Avatar, capitalize, downloadBlob, Empty, ErrorBox, Field, Icon, RelTime, Select, Skeleton, Toggle } from './common';
+import { InvitePanel } from './Invite';
 
-export type SettingsTab = 'workspace' | 'members' | 'notifications' | 'integrations' | 'developer' | 'account';
+export type SettingsTab = 'workspace' | 'sites' | 'members' | 'notifications' | 'integrations' | 'developer' | 'account';
 
 const TABS: { id: SettingsTab; label: string; admin?: boolean }[] = [
-  { id: 'workspace', label: 'Workspace' },
-  { id: 'members', label: 'Members' },
+  { id: 'workspace', label: 'General' },
+  { id: 'sites', label: 'Sites' },
+  { id: 'members', label: 'People' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'integrations', label: 'Integrations', admin: true },
   { id: 'developer', label: 'API & webhooks', admin: true },
@@ -34,22 +36,27 @@ export function Settings({ tab, onTab }: { tab: SettingsTab; onTab: (t: Settings
   const role = membership.member.role;
   const isAdmin = can(role, 'manageMembers');
   const tabs = TABS.filter((t) => !t.admin || isAdmin);
+  const current = tabs.some((t) => t.id === tab) ? tab : 'workspace';
   return (
     <div class="pp-settings">
-      <nav class="pp-tabs" role="tablist" aria-label="Settings sections">
-        {tabs.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} class={tab === t.id ? 'pp-active' : ''} onClick={() => onTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
-      <div class="pp-settings-body" role="tabpanel">
-        {tab === 'workspace' && <WorkspaceSettings workspaceId={membership.workspace.id} role={role} />}
-        {tab === 'members' && <MembersSettings workspaceId={membership.workspace.id} role={role} />}
-        {tab === 'notifications' && <NotificationSettings workspaceId={membership.workspace.id} member={membership.member} />}
-        {tab === 'integrations' && isAdmin && <IntegrationSettings workspaceId={membership.workspace.id} />}
-        {tab === 'developer' && isAdmin && <DeveloperSettings workspaceId={membership.workspace.id} />}
-        {tab === 'account' && <AccountSettings />}
+      <div class="pp-settings-side">
+        <h1 class="pp-h1">Settings</h1>
+        <nav class="pp-tabs" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+          {tabs.map((t) => (
+            <button key={t.id} role="tab" id={`pp-tab-${t.id}`} aria-selected={current === t.id} class={current === t.id ? 'pp-active' : ''} onClick={() => onTab(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+      <div class="pp-settings-body" role="tabpanel" aria-labelledby={`pp-tab-${current}`}>
+        {current === 'workspace' && <WorkspaceSettings workspaceId={membership.workspace.id} role={role} only="general" />}
+        {current === 'sites' && <WorkspaceSettings workspaceId={membership.workspace.id} role={role} only="sites" />}
+        {current === 'members' && <MembersSettings workspaceId={membership.workspace.id} role={role} />}
+        {current === 'notifications' && <NotificationSettings workspaceId={membership.workspace.id} member={membership.member} />}
+        {current === 'integrations' && isAdmin && <IntegrationSettings workspaceId={membership.workspace.id} />}
+        {current === 'developer' && isAdmin && <DeveloperSettings workspaceId={membership.workspace.id} />}
+        {current === 'account' && <AccountSettings />}
       </div>
     </div>
   );
@@ -76,7 +83,7 @@ function useSaver() {
 
 // ---------------- workspace ----------------
 
-export function WorkspaceSettings({ workspaceId, role }: { workspaceId: string; role: Role }) {
+export function WorkspaceSettings({ workspaceId, role, only = 'general' }: { workspaceId: string; role: Role; only?: 'general' | 'sites' }) {
   const { host, confirm } = useUi();
   const { data: ws, error, loading, reload, setData } = useAsync(() => host.api.getWorkspace(workspaceId), [workspaceId]);
   const [draft, setDraft] = useState<Workspace | null>(null);
@@ -109,6 +116,74 @@ export function WorkspaceSettings({ workspaceId, role }: { workspaceId: string; 
     setNewSite('');
   };
 
+  const dirty = JSON.stringify(draft) !== JSON.stringify(ws);
+  const saveBar = (canSites || canShare) && (
+    <div class={`pp-savebar ${dirty ? 'pp-dirty' : ''}`}>
+      <span class="pp-muted pp-small pp-grow">{dirty ? 'You have unsaved changes' : 'All changes saved'}</span>
+      {dirty && (
+        <button type="button" class="pp-btn pp-btn-sm pp-btn-ghost" onClick={() => setDraft(ws ?? null)}>
+          Discard
+        </button>
+      )}
+      <button type="submit" class="pp-btn pp-btn-primary pp-btn-sm" disabled={busy || !dirty}>
+        Save changes
+      </button>
+    </div>
+  );
+
+  if (only === 'sites')
+    return (
+      <form
+        class="pp-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <section class="pp-section">
+          <h2>Allowed sites</h2>
+          <p class="pp-muted pp-small">
+            Pinpoint only shows comments and the comment tool on these sites. <code>localhost</code> always works. Use <code>*.example.com</code> to include every subdomain.
+          </p>
+          {canSites && (
+            <div class="pp-row">
+              <input
+                class="pp-grow"
+                placeholder="staging.example.com"
+                aria-label="Add site"
+                value={newSite}
+                onInput={(e) => setNewSite((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addSite();
+                  }
+                }}
+              />
+              <button type="button" class="pp-btn" onClick={addSite} disabled={!newSite.trim()}>
+                <Icon name="plus" size={14} /> Add site
+              </button>
+            </div>
+          )}
+          <ul class="pp-site-list" role="list">
+            {draft.allowedSites.map((st) => (
+              <li key={st}>
+                <Icon name="globe" size={15} />
+                <span class="pp-grow">{st}</span>
+                {canSites && (
+                  <button type="button" class="pp-icon-btn pp-icon-sm" aria-label={`Remove ${st}`} onClick={() => setDraft({ ...draft, allowedSites: draft.allowedSites.filter((x) => x !== st) })}>
+                    <Icon name="x" size={14} />
+                  </button>
+                )}
+              </li>
+            ))}
+            {!draft.allowedSites.length && <li class="pp-muted pp-small pp-site-empty">No sites yet — only localhost is enabled.</li>}
+          </ul>
+        </section>
+        {saveBar}
+      </form>
+    );
+
   return (
     <form
       class="pp-form"
@@ -117,100 +192,80 @@ export function WorkspaceSettings({ workspaceId, role }: { workspaceId: string; 
         save();
       }}
     >
-      <h2>General</h2>
-      <Field label="Workspace name">
-        <input value={draft.name} disabled={!canSites} onInput={(e) => setDraft({ ...draft, name: (e.target as HTMLInputElement).value })} />
-      </Field>
+      <section class="pp-section">
+        <h2>Workspace</h2>
+        <Field label="Name">
+          <input value={draft.name} disabled={!canSites} onInput={(e) => setDraft({ ...draft, name: (e.target as HTMLInputElement).value })} />
+        </Field>
+      </section>
 
-      <h2>Allowed sites</h2>
-      <p class="pp-muted pp-small">Pinpoint only runs on these sites (plus localhost). Use *.example.com for subdomains.</p>
-      <ul class="pp-chip-list">
-        {draft.allowedSites.map((s) => (
-          <li key={s} class="pp-chip">
-            {s}
-            {canSites && (
-              <button type="button" class="pp-icon-btn pp-icon-sm" aria-label={`Remove ${s}`} onClick={() => setDraft({ ...draft, allowedSites: draft.allowedSites.filter((x) => x !== s) })}>
-                ×
-              </button>
-            )}
-          </li>
-        ))}
-        {!draft.allowedSites.length && <li class="pp-muted pp-small">No sites yet — only localhost is enabled.</li>}
-      </ul>
-      {canSites && (
-        <div class="pp-row">
+      <section class="pp-section">
+        <h2>Sharing &amp; access</h2>
+        <div class="pp-setting-row">
+          <div class="pp-grow">
+            <div class="pp-setting-title">Who can open shared links</div>
+            <div class="pp-muted pp-small">Applies to every “Copy link” in this workspace.</div>
+          </div>
+          <Select<Workspace['linkSharing']>
+            label="Who can open shared links"
+            size="sm"
+            align="end"
+            disabled={!canShare}
+            value={draft.linkSharing}
+            onChange={(v) => setDraft({ ...draft, linkSharing: v })}
+            options={[
+              { value: 'members', label: 'Workspace members', hint: 'Sign-in required' },
+              { value: 'anyone', label: 'Anyone with the link', hint: 'Public' },
+            ]}
+          />
+        </div>
+        <Field label="Only allow people with this email domain to join" hint="For example example.com. Leave empty to allow anyone you invite.">
+          <input disabled={!canShare} placeholder="example.com" value={draft.emailDomain ?? ''} onInput={(e) => setDraft({ ...draft, emailDomain: (e.target as HTMLInputElement).value.trim() || null })} />
+        </Field>
+      </section>
+
+      <section class="pp-section">
+        <h2>Privacy</h2>
+        <Toggle checked={draft.privacy.allowFullPage} disabled={!canShare} label="Allow full-page snapshots" hint="Scroll-and-stitch captures of the whole page." onChange={(v) => setDraft({ ...draft, privacy: { ...draft.privacy, allowFullPage: v } })} />
+        <Toggle checked={draft.privacy.allowDom} disabled={!canShare} label="Allow HTML snapshots" hint="Saves the selected element’s HTML and styles for developers." onChange={(v) => setDraft({ ...draft, privacy: { ...draft.privacy, allowDom: v } })} />
+        <Toggle checked={draft.privacy.requireBlurReview} disabled={!canShare} label="Ask to blur sensitive parts before saving" hint="Shows the blur tool every time a snapshot is taken." onChange={(v) => setDraft({ ...draft, privacy: { ...draft.privacy, requireBlurReview: v } })} />
+        <Field label="Delete snapshots after (days)" hint="Leave empty to keep snapshots forever.">
           <input
-            placeholder="staging.example.com"
-            aria-label="Add site"
-            value={newSite}
-            onInput={(e) => setNewSite((e.target as HTMLInputElement).value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addSite();
-              }
+            type="number"
+            min={1}
+            disabled={!canShare}
+            placeholder="Keep forever"
+            value={draft.privacy.snapshotRetentionDays ?? ''}
+            onInput={(e) => {
+              const v = (e.target as HTMLInputElement).value;
+              setDraft({ ...draft, privacy: { ...draft.privacy, snapshotRetentionDays: v ? Math.max(1, Number(v)) : null } });
             }}
           />
-          <button type="button" class="pp-btn" onClick={addSite}>
-            Add site
-          </button>
-        </div>
-      )}
+        </Field>
+      </section>
 
-      <h2>Sharing &amp; access</h2>
-      <Field label="Share links" hint="Who can open a thread's share link">
-        <select disabled={!canShare} value={draft.linkSharing} onChange={(e) => setDraft({ ...draft, linkSharing: (e.target as HTMLSelectElement).value as Workspace['linkSharing'] })}>
-          <option value="members">Workspace members only</option>
-          <option value="anyone">Anyone with the link</option>
-        </select>
-      </Field>
-      <Field label="Restrict joining to email domain" hint="e.g. example.com — leave empty to allow any">
-        <input disabled={!canShare} value={draft.emailDomain ?? ''} onInput={(e) => setDraft({ ...draft, emailDomain: (e.target as HTMLInputElement).value.trim() || null })} />
-      </Field>
-
-      <h2>Privacy</h2>
-      <Toggle checked={draft.privacy.allowFullPage} label="Allow full-page snapshots" onChange={(v) => canShare && setDraft({ ...draft, privacy: { ...draft.privacy, allowFullPage: v } })} />
-      <Toggle checked={draft.privacy.allowDom} label="Allow DOM snapshots (HTML and styles)" onChange={(v) => canShare && setDraft({ ...draft, privacy: { ...draft.privacy, allowDom: v } })} />
-      <Toggle checked={draft.privacy.requireBlurReview} label="Require blur review before saving snapshots" onChange={(v) => canShare && setDraft({ ...draft, privacy: { ...draft.privacy, requireBlurReview: v } })} />
-      <Field label="Snapshot retention (days)" hint="Leave empty to keep snapshots forever">
-        <input
-          type="number"
-          min={1}
-          disabled={!canShare}
-          value={draft.privacy.snapshotRetentionDays ?? ''}
-          onInput={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            setDraft({ ...draft, privacy: { ...draft.privacy, snapshotRetentionDays: v ? Math.max(1, Number(v)) : null } });
-          }}
-        />
-      </Field>
-
-      {(canSites || canShare) && (
-        <div class="pp-row pp-end">
-          <button type="submit" class="pp-btn pp-btn-primary" disabled={busy}>
-            Save changes
-          </button>
-        </div>
-      )}
+      {saveBar}
 
       {can(role, 'deleteWorkspace') && (
-        <div class="pp-danger-zone">
+        <section class="pp-section pp-danger-zone">
           <h2>Delete workspace</h2>
-          <p class="pp-muted pp-small">Deletes every thread, comment and snapshot. This cannot be undone.</p>
-          <button
-            type="button"
-            class="pp-btn pp-btn-danger"
-            onClick={async () => {
-              if (!(await confirm({ title: `Delete "${draft.name}"?`, body: 'All comments and snapshots will be removed for everyone.', confirmLabel: 'Delete workspace', danger: true }))) return;
-              await run(async () => {
-                await host.api.deleteWorkspace(workspaceId);
-                await host.refreshSession();
-              }, 'Workspace deleted');
-            }}
-          >
-            Delete workspace
-          </button>
-        </div>
+          <p class="pp-muted pp-small">Deletes every thread, comment and snapshot for everyone. This cannot be undone.</p>
+          <div>
+            <button
+              type="button"
+              class="pp-btn pp-danger"
+              onClick={async () => {
+                if (!(await confirm({ title: `Delete "${draft.name}"?`, body: 'All comments and snapshots will be removed for everyone.', confirmLabel: 'Delete workspace', danger: true }))) return;
+                await run(async () => {
+                  await host.api.deleteWorkspace(workspaceId);
+                  await host.refreshSession();
+                }, 'Workspace deleted');
+              }}
+            >
+              Delete workspace
+            </button>
+          </div>
+        </section>
       )}
     </form>
   );
@@ -222,11 +277,7 @@ export function MembersSettings({ workspaceId, role }: { workspaceId: string; ro
   const { host, confirm, toast, session, membersCache } = useUi();
   const isAdmin = can(role, 'manageMembers');
   const { data: members, error, loading, reload } = useAsync(() => host.api.listMembers(workspaceId), [workspaceId]);
-  const { data: invites = [], reload: reloadInvites } = useAsync(() => (isAdmin ? host.api.listInvites(workspaceId) : Promise.resolve([])), [workspaceId, isAdmin]);
-  const { data: ws, setData: setWs } = useAsync(() => host.api.getWorkspace(workspaceId), [workspaceId]);
   const { data: grants = [], reload: reloadGrants } = useAsync(() => (isAdmin ? host.api.listGuestGrants(workspaceId) : Promise.resolve([])), [workspaceId, isAdmin]);
-  const [emails, setEmails] = useState('');
-  const [inviteRole, setInviteRole] = useState<Role>('member');
   const [guestThreads, setGuestThreads] = useState('');
   const { busy, run } = useSaver();
   const meId = session.me?.user.id;
@@ -238,139 +289,87 @@ export function MembersSettings({ workspaceId, role }: { workspaceId: string; ro
   if (loading && !members) return <Skeleton rows={6} />;
   if (error) return <ErrorBox error={error} onRetry={reload} />;
 
-  const inviteUrl = ws?.inviteToken ? webAppUrl(host.serverUrl, `/invite/${ws.inviteToken}`) : null;
-
   const changeRole = (m: Member, next: Role) => run(async () => (await host.api.updateMember(workspaceId, m.id, { role: next }), reload()), 'Role updated');
   const remove = async (m: Member) => {
     const self = m.userId === meId;
-    if (!(await confirm({ title: self ? 'Leave this workspace?' : `Remove ${m.user.name || m.user.email}?`, confirmLabel: self ? 'Leave' : 'Remove', danger: true }))) return;
+    if (!(await confirm({ title: self ? 'Leave this workspace?' : `Remove ${m.user.name || m.user.email}?`, body: self ? undefined : 'They lose access right away. Their comments stay.', confirmLabel: self ? 'Leave' : 'Remove', danger: true }))) return;
     await run(async () => {
       await host.api.removeMember(workspaceId, m.id);
       if (self) await host.refreshSession();
       else reload();
     }, self ? 'You left the workspace' : 'Member removed');
   };
+  const ROLE_HINT: Record<Role, string> = { owner: 'Full control', admin: 'Manage people & sites', member: 'Comment and resolve', guest: 'Shared items only' };
 
   return (
     <div class="pp-form">
-      <h2>Members</h2>
-      <ul class="pp-member-list" role="list">
-        {(members ?? []).map((m) => (
-          <li key={m.id} class="pp-member">
-            <Avatar user={m.user} size={28} />
-            <span class="pp-row-body">
-              <strong>
-                {m.user.name || m.user.email}
-                {m.userId === meId ? ' (you)' : ''}
-              </strong>
-              <span class="pp-muted pp-small">{m.user.email}</span>
-            </span>
-            {isAdmin && m.userId !== meId ? (
-              <select aria-label={`Role for ${m.user.name}`} value={m.role} disabled={busy} onChange={(e) => changeRole(m, (e.target as HTMLSelectElement).value as Role)}>
-                {(['owner', 'admin', 'member', 'guest'] as Role[]).map((r) => (
-                  <option key={r} value={r} disabled={!canChangeRole(role, m.role, r)}>
-                    {capitalize(r)}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span class="pp-badge">{capitalize(m.role)}</span>
-            )}
-            {(m.userId === meId ? m.role !== 'owner' : isAdmin && canChangeRole(role, m.role, m.role)) && (
-              <button class="pp-btn pp-btn-sm" onClick={() => remove(m)}>
-                {m.userId === meId ? 'Leave' : 'Remove'}
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
+      {isAdmin && (
+        <section class="pp-section">
+          <h2>Invite people</h2>
+          <InvitePanel workspaceId={workspaceId} />
+        </section>
+      )}
+
+      <section class="pp-section">
+        <h2>Members · {members?.length ?? 0}</h2>
+        <ul class="pp-member-list" role="list">
+          {(members ?? []).map((m) => (
+            <li key={m.id} class="pp-member">
+              <Avatar user={m.user} size={32} />
+              <span class="pp-row-body">
+                <strong>
+                  {m.user.name || m.user.email}
+                  {m.userId === meId ? <span class="pp-muted"> (you)</span> : null}
+                </strong>
+                <span class="pp-muted pp-small">{m.user.email}</span>
+              </span>
+              {isAdmin && m.userId !== meId ? (
+                <Select<Role>
+                  label={`Role for ${m.user.name || m.user.email}`}
+                  size="sm"
+                  align="end"
+                  value={m.role}
+                  disabled={busy}
+                  onChange={(r) => changeRole(m, r)}
+                  options={(['owner', 'admin', 'member', 'guest'] as Role[]).map((r) => ({ value: r, label: capitalize(r), hint: ROLE_HINT[r], disabled: !canChangeRole(role, m.role, r) }))}
+                />
+              ) : (
+                <span class="pp-badge">{capitalize(m.role)}</span>
+              )}
+              {(m.userId === meId ? m.role !== 'owner' : isAdmin && canChangeRole(role, m.role, m.role)) && (
+                <button class="pp-btn pp-btn-sm pp-btn-ghost" onClick={() => remove(m)}>
+                  {m.userId === meId ? 'Leave' : 'Remove'}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
 
       {isAdmin && (
-        <>
-          <h2>Invite by email</h2>
-          <form
-            class="pp-row pp-wrap"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              const list = emails
-                .split(/[\s,;]+/)
-                .map((s) => s.trim())
-                .filter((s) => /.+@.+\..+/.test(s));
-              if (!list.length) return toast('Enter at least one email', 'error');
-              if (await run(() => host.api.invite(workspaceId, list, inviteRole), `Invited ${list.length}`)) {
-                setEmails('');
-                reloadInvites();
-              }
-            }}
-          >
-            <input class="pp-grow" aria-label="Emails to invite" placeholder="ana@example.com, bo@example.com" value={emails} onInput={(e) => setEmails((e.target as HTMLInputElement).value)} />
-            <select aria-label="Role" value={inviteRole} onChange={(e) => setInviteRole((e.target as HTMLSelectElement).value as Role)}>
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button class="pp-btn pp-btn-primary" disabled={busy}>
-              Send invites
-            </button>
-          </form>
-          {invites.filter((i) => !i.acceptedAt).length > 0 && (
-            <ul class="pp-simple-list">
-              {invites
-                .filter((i) => !i.acceptedAt)
-                .map((i) => (
-                  <li key={i.id}>
-                    <span class="pp-grow">
-                      {i.email} · {capitalize(i.role)} · <RelTime iso={i.createdAt} />
-                    </span>
-                    <button class="pp-link-btn" onClick={() => run(async () => (await host.api.revokeInvite(workspaceId, i.id), reloadInvites()), 'Invite revoked')}>
-                      Revoke
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          )}
-
-          <h2>Invite link</h2>
-          <p class="pp-muted pp-small">Anyone with this link can join as a member{ws?.emailDomain ? ` (only @${ws.emailDomain} emails)` : ''}.</p>
-          <div class="pp-row pp-wrap">
-            {inviteUrl ? (
-              <>
-                <input class="pp-grow" readOnly value={inviteUrl} aria-label="Invite link" onFocus={(e) => (e.target as HTMLInputElement).select()} />
-                <button class="pp-btn" onClick={() => host.copy(inviteUrl).then(() => toast('Invite link copied', 'success'))}>
-                  Copy
-                </button>
-                <button class="pp-btn" onClick={() => run(async () => ws && setWs({ ...ws, inviteToken: (await host.api.rotateInviteLink(workspaceId)).token }), 'New link created')}>
-                  Reset
-                </button>
-                <button class="pp-btn pp-btn-danger" onClick={() => run(async () => (await host.api.disableInviteLink(workspaceId), ws && setWs({ ...ws, inviteToken: null })), 'Invite link disabled')}>
-                  Disable
-                </button>
-              </>
-            ) : (
-              <button class="pp-btn" onClick={() => run(async () => ws && setWs({ ...ws, inviteToken: (await host.api.rotateInviteLink(workspaceId)).token }), 'Invite link created')}>
-                Create invite link
-              </button>
-            )}
-          </div>
-
+        <section class="pp-section">
           <h2>Guest links</h2>
-          <p class="pp-muted pp-small">Guests can comment on the threads or pages you share with them, without full access.</p>
+          <p class="pp-muted pp-small">Give clients or stakeholders access to specific threads or pages only. Tip: “Copy link” on a thread is often enough when link sharing is set to “Anyone with the link”.</p>
           <form
             class="pp-row pp-wrap"
             onSubmit={async (e) => {
               e.preventDefault();
-              const ids = guestThreads.split(/[\s,]+/).filter(Boolean);
-              const threadIds = ids.filter((s) => !s.startsWith('page:'));
-              const pageIds = ids.filter((s) => s.startsWith('page:')).map((s) => s.slice(5));
-              if (!ids.length) return toast('Enter thread IDs or page:<id>', 'error');
+              const ids = guestThreads
+                .split(/[\s,]+/)
+                .map((x) => x.replace(/^.*[?&]thread=/, '').replace(/^.*\/thread\//, ''))
+                .filter(Boolean);
+              const threadIds = ids.filter((x) => !x.startsWith('page:'));
+              const pageIds = ids.filter((x) => x.startsWith('page:')).map((x) => x.slice(5));
+              if (!ids.length) return toast('Paste thread links or IDs (or page:<id>)', 'error');
               await run(async () => {
                 const g = await host.api.createGuestGrant(workspaceId, { threadIds, pageIds });
                 await host.copy(g.url);
                 setGuestThreads('');
                 reloadGrants();
-              }, 'Guest link copied');
+              }, 'Guest link created and copied');
             }}
           >
-            <input class="pp-grow" aria-label="Thread IDs or page:<id>" placeholder="thread ids, or page:<page id>, comma separated" value={guestThreads} onInput={(e) => setGuestThreads((e.target as HTMLInputElement).value)} />
+            <input class="pp-grow" aria-label="Thread links or IDs" placeholder="Paste thread links or IDs, comma separated" value={guestThreads} onInput={(e) => setGuestThreads((e.target as HTMLInputElement).value)} />
             <button class="pp-btn">Create guest link</button>
           </form>
           {grants.filter((g) => !g.revokedAt).length > 0 && (
@@ -379,20 +378,21 @@ export function MembersSettings({ workspaceId, role }: { workspaceId: string; ro
                 .filter((g) => !g.revokedAt)
                 .map((g) => (
                   <li key={g.id}>
+                    <Icon name="link" size={14} />
                     <span class="pp-grow">
-                      {g.threadIds.length} thread(s), {g.pageIds.length} page(s) · <RelTime iso={g.createdAt} />
+                      {g.threadIds.length} thread{g.threadIds.length === 1 ? '' : 's'}, {g.pageIds.length} page{g.pageIds.length === 1 ? '' : 's'} · <RelTime iso={g.createdAt} />
                     </span>
-                    <button class="pp-link-btn" onClick={() => host.copy(webAppUrl(host.serverUrl, `/invite/${g.token}`)).then(() => toast('Copied', 'success'))}>
+                    <button class="pp-link-btn pp-small" onClick={() => host.copy(webAppUrl(host.serverUrl, `/invite/${g.token}`)).then(() => toast('Guest link copied', 'success'))}>
                       Copy
                     </button>
-                    <button class="pp-link-btn" onClick={() => run(async () => (await host.api.revokeGuestGrant(workspaceId, g.id), reloadGrants()), 'Guest link revoked')}>
-                      Revoke
+                    <button class="pp-link-btn pp-small pp-danger" onClick={() => run(async () => (await host.api.revokeGuestGrant(workspaceId, g.id), reloadGrants()), 'Guest link turned off')}>
+                      Turn off
                     </button>
                   </li>
                 ))}
             </ul>
           )}
-        </>
+        </section>
       )}
     </div>
   );
@@ -443,10 +443,15 @@ export function NotificationSettings({ workspaceId, member }: { workspaceId: str
         </tbody>
       </table>
       <Field label="Email delivery">
-        <select value={prefs.emailMode} onChange={(e) => setPrefs({ ...prefs, emailMode: (e.target as HTMLSelectElement).value as NotificationPrefs['emailMode'] })}>
-          <option value="immediate">Immediately</option>
-          <option value="digest">Daily digest</option>
-        </select>
+        <Select<NotificationPrefs['emailMode']>
+          label="Email delivery"
+          value={prefs.emailMode}
+          onChange={(v) => setPrefs({ ...prefs, emailMode: v })}
+          options={[
+            { value: 'immediate', label: 'Right away' },
+            { value: 'digest', label: 'Once a day (digest)' },
+          ]}
+        />
       </Field>
       <div class="pp-row pp-end">
         <button class="pp-btn pp-btn-primary" disabled={busy}>

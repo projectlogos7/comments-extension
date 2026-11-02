@@ -1,6 +1,6 @@
 import { defaultNotificationPrefs, type Role } from '@pinpoint/shared';
 import type { AppCtx } from '../context';
-import { forbidden } from '../errors';
+import { AppError, forbidden } from '../errors';
 
 export function domainOf(email: string): string {
   return email.split('@')[1]?.toLowerCase() ?? '';
@@ -15,7 +15,7 @@ export async function joinWorkspace(
   if (!ws[0]) throw forbidden('Workspace no longer exists');
   const restricted = ws[0].email_domain as string | null;
   if (input.enforceDomain && restricted && domainOf(input.email) !== restricted.toLowerCase().replace(/^@/, '')) {
-    throw forbidden(`Only @${restricted} accounts can join this workspace`);
+    throw new AppError(403, 'domain_restricted', `This workspace only accepts @${restricted.replace(/^@/, '')} email addresses, and you're signed in as ${input.email}. Sign in with your @${restricted.replace(/^@/, '')} account to join.`);
   }
   const { rows: existing } = await app.db.query('SELECT id, role FROM members WHERE workspace_id = $1 AND user_id = $2', [input.workspaceId, input.userId]);
   if (existing[0]) {

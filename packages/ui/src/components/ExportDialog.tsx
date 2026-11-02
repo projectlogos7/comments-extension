@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { ExportFormat, ListThreadsQuery, Page } from '@pinpoint/shared';
 import { errorMessage, useUi } from '../context';
-import { Modal } from './common';
+import { Modal, Select } from './common';
 import { cleanFilters } from './FiltersBar';
 
 export type ExportTarget = 'selection' | 'filter' | 'page' | 'site';
@@ -91,26 +91,14 @@ export function ExportDialog({ workspaceId, selectedIds, query, pages, sites, on
           <span>One page</span>
         </label>
         {target === 'page' && (
-          <select aria-label="Page to export" value={pageId} onChange={(e) => setPageId((e.target as HTMLSelectElement).value)}>
-            {pages.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.title || p.normalizedUrl}
-              </option>
-            ))}
-          </select>
+          <Select label="Page to export" size="sm" value={pageId} onChange={setPageId} options={pages.map((p) => ({ value: p.id, label: p.title || p.normalizedUrl }))} />
         )}
         <label class="pp-radio">
           <input type="radio" name="pp-target" disabled={!sites.length} checked={target === 'site'} onChange={() => setTarget('site')} />
           <span>A whole site</span>
         </label>
         {target === 'site' && (
-          <select aria-label="Site to export" value={site} onChange={(e) => setSite((e.target as HTMLSelectElement).value)}>
-            {sites.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+          <Select label="Site to export" size="sm" value={site} onChange={setSite} options={sites.map((s) => ({ value: s, label: s }))} />
         )}
       </fieldset>
       <p class="pp-muted pp-small">Each exported thread includes its share link.</p>

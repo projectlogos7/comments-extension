@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { Notification } from '@pinpoint/shared';
-import { errorMessage, useAsync, useUi, useUiEvents } from '../context';
+import { errorMessage, useAsync, useDebouncedUiEvents, useUi } from '../context';
 import { Avatar, Empty, ErrorBox, RelTime, Skeleton } from './common';
 
 const EVENT_LABEL: Record<Notification['event'], string> = {
@@ -17,9 +17,7 @@ export function Inbox({ workspaceId, onOpen }: { workspaceId?: string | null; on
     () => host.api.notifications({ workspaceId: workspaceId ?? undefined, unread: filter === 'unread' || undefined, limit: 100 }),
     [workspaceId, filter],
   );
-  useUiEvents((e) => {
-    if (e.kind === 'unread.changed' || e.kind === 'threads.changed') reload();
-  });
+  useDebouncedUiEvents((e) => e.kind === 'unread.changed', reload, [workspaceId, filter]);
 
   const items = (data ?? []).filter((n) => filter !== 'mentions' || n.event === 'mention');
 
@@ -59,7 +57,9 @@ export function Inbox({ workspaceId, onOpen }: { workspaceId?: string | null; on
       ) : error ? (
         <ErrorBox error={error} onRetry={reload} />
       ) : !items.length ? (
-        <Empty title="You're all caught up">Mentions, replies, assignments and resolutions show up here.</Empty>
+        <Empty title="You’re all caught up" icon="inbox">
+          Mentions, replies, assignments and resolutions show up here.
+        </Empty>
       ) : (
         <ul class="pp-notifications" role="list">
           {items.map((n) => (

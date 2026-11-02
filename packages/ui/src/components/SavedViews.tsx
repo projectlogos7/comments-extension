@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { SavedView, ThreadFilters, ThreadSort } from '@pinpoint/shared';
 import { errorMessage, useAsync, useUi } from '../context';
-import { Modal, Toggle } from './common';
+import { Icon, Menu, Modal, Select, Toggle, type MenuItem } from './common';
 
 export interface SavedViewsProps {
   workspaceId: string;
@@ -56,37 +56,27 @@ export function SavedViews({ workspaceId, filters, sort, activeViewId, onApply }
     }
   };
 
+  const items: MenuItem[] = [
+    { label: 'Save current filters as a view…', icon: 'plus', onSelect: () => setSaving(true) },
+    ...(active && active.createdBy === meId
+      ? [
+          { label: `Update “${active.name}”`, icon: 'refresh' as const, onSelect: updateActive },
+          { label: `Delete “${active.name}”`, icon: 'trash' as const, danger: true, onSelect: remove },
+        ]
+      : []),
+  ];
+
   return (
     <div class="pp-views" aria-label="Saved views">
-      <select
-        aria-label="Saved view"
+      <Select
+        label="Saved view"
+        size="sm"
+        align="end"
         value={activeViewId ?? ''}
-        onChange={(e) => {
-          const id = (e.target as HTMLSelectElement).value;
-          onApply(views.find((v) => v.id === id) ?? null);
-        }}
-      >
-        <option value="">All threads</option>
-        {views.map((v) => (
-          <option key={v.id} value={v.id}>
-            {v.name}
-            {v.shared ? ' (shared)' : ''}
-          </option>
-        ))}
-      </select>
-      <button class="pp-btn pp-btn-sm" onClick={() => setSaving(true)}>
-        Save view
-      </button>
-      {active && active.createdBy === meId && (
-        <>
-          <button class="pp-btn pp-btn-sm" onClick={updateActive}>
-            Update
-          </button>
-          <button class="pp-btn pp-btn-sm pp-btn-danger" onClick={remove}>
-            Delete
-          </button>
-        </>
-      )}
+        onChange={(id) => onApply(views.find((v) => v.id === id) ?? null)}
+        options={[{ value: '', label: 'All threads' }, ...views.map((v) => ({ value: v.id, label: v.name, hint: v.shared ? 'Shared' : undefined }))]}
+      />
+      <Menu label="View options" icon={<Icon name="more" />} buttonClass="pp-icon-btn" items={items} />
       {saving && (
         <Modal title="Save view" onClose={() => setSaving(false)}>
           <form

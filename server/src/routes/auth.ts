@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AppCtx } from '../context';
 import { requireUser } from '../context';
 import { decodeJwtPayload, randomToken, sha256, signJwt, verifyJwt } from '../crypto';
@@ -103,7 +103,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppCtx) {
     },
   );
 
-  app.post('/api/v1/auth/email', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {
+  app.post('/api/v1/auth/email', { config: { rateLimit: { max: ctx.cfg.rateLimit.authEmailMax, timeWindow: ctx.cfg.rateLimit.window, keyGenerator: (req: FastifyRequest) => 'email:' + req.ip } } }, async (req) => {
     const body = parse(z.object({ email: z.string().email().max(254), redirect: z.string().url() }), req.body);
     if (!isAllowedRedirect(ctx, body.redirect)) throw badRequest('redirect is not allowed', 'bad_redirect');
     const email = normalizeEmail(body.email);

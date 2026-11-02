@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { ListThreadsQuery, SavedView, Thread, ThreadFilters, ThreadSort } from '@pinpoint/shared';
-import { errorMessage, useAsync, useMembers, useUi, useUiEvents } from '../context';
-import { Empty, ErrorBox, Skeleton } from './common';
+import { can } from '@pinpoint/shared';
+import { errorMessage, useAsync, useDebouncedUiEvents, useMembers, useRole, useUi } from '../context';
+import { Drawer, Empty, ErrorBox, Icon, Kbd, Skeleton } from './common';
 import { BulkBar } from './BulkBar';
 import { ExportDialog } from './ExportDialog';
 import { FiltersBar } from './FiltersBar';
@@ -46,11 +47,11 @@ export function AllComments({ workspaceId, threadId, onSelectThread, initialFilt
 
   useEffect(() => setSelected(new Set()), [workspaceId, query]);
 
-  useUiEvents((e) => {
-    if (e.kind === 'threads.changed' && e.workspaceId === workspaceId) {
-      reload();
-      if (!e.threadId) reloadPages();
-    }
+  const role = useRole();
+  // Realtime events come in bursts; refresh the list at most once per burst.
+  useDebouncedUiEvents((e) => e.kind === 'threads.changed' && e.workspaceId === workspaceId, () => {
+    reload();
+    reloadPages();
   }, [workspaceId]);
 
   const loadMore = async () => {
@@ -91,17 +92,23 @@ export function AllComments({ workspaceId, threadId, onSelectThread, initialFilt
       return n;
     });
 
+  const filtered = Object.keys(filters).some((k) => k !== 'status');
   return (
     <div class={`pp-all ${threadId ? 'pp-has-detail' : ''}`}>
       <div class="pp-all-list">
-        <div class="pp-row pp-wrap pp-toolbar">
-          <h1 class="pp-h1">All comments</h1>
-          <span class="pp-muted">{total} thread{total === 1 ? '' : 's'}</span>
-          <span class="pp-grow" />
+        <div class="pp-page-head-row">
+          <div class="pp-grow">
+            <h1 class="pp-h1">All comments</h1>
+            <p class="pp-muted pp-small">
+              {total} {filters.status === 'open' ? 'open ' : filters.status === 'resolved' ? 'resolved ' : ''}thread{total === 1 ? '' : 's'} across your sites
+            </p>
+          </div>
           <SavedViews workspaceId={workspaceId} filters={filters} sort={sort} activeViewId={viewId} onApply={applyView} />
-          <button class="pp-btn pp-btn-sm" onClick={() => setExporting(true)}>
-            Export
-          </button>
+          {can(role, 'export') && (
+            <button class="pp-btn pp-btn-sm" onClick={() => setExporting(true)}>
+              <Icon name="download" size={14} /> Export
+            </button>
+          )}
         </div>
         <FiltersBar
           filters={filters}
@@ -120,7 +127,25 @@ export function AllComments({ workspaceId, threadId, onSelectThread, initialFilt
         ) : error ? (
           <ErrorBox error={error} onRetry={reload} />
         ) : !items.length ? (
-          <Empty title="No comments match">Try clearing filters, or leave a comment on a page with the extension (Alt+Shift+C).</Empty>
+          filtered || filters.q ? (
+            <Empty title="Nothing matches these filters" icon="search" action={<button class="pp-btn" onClick={() => (setFilters({}), setViewId(null))}>Clear filters</button>} />
+          ) : filters.status === 'open' ? (
+            <Empty
+              title="No open comments"
+              icon="check"
+              action={
+                <button class="pp-btn" onClick={() => setFilters({})}>
+                  Show resolved too
+                </button>
+              }
+            >
+              Open a page on one of your sites and press <Kbd>Alt</Kbd>+<Kbd>Shift</Kbd>+<Kbd>C</Kbd> to point at something.
+            </Empty>
+          ) : (
+            <Empty title="No comments yet" icon="message">
+              Open a page on one of your sites and press <Kbd>Alt</Kbd>+<Kbd>Shift</Kbd>+<Kbd>C</Kbd> to point at something.
+            </Empty>
+          )
         ) : (
           <>
             <ThreadList
@@ -128,22 +153,22 @@ export function AllComments({ workspaceId, threadId, onSelectThread, initialFilt
               selected={selected}
               onToggleSelect={toggle}
               onToggleAll={toggleAll}
-              onOpen={(t) => onSelectThread(t.id)}
+              onOpen={(t) => onSelectThread(t.id === threadId ? null : t.id)}
               activeId={threadId}
               grouped={sort !== 'priority' && sort !== 'oldest'}
             />
             {cursor && (
               <button class="pp-btn pp-load-more" disabled={loadingMore} onClick={loadMore}>
-                {loadingMore ? 'Loading…' : `Load more (${items.length} of ${total})`}
+                {loadingMore ? 'Loading…' : `Show more (${items.length} of ${total})`}
               </button>
             )}
           </>
         )}
       </div>
       {threadId && (
-        <aside class="pp-all-detail" aria-label="Thread detail">
+        <Drawer label="Thread detail" onClose={() => onSelectThread(null)}>
           <ThreadView key={threadId} threadId={threadId} onClose={() => onSelectThread(null)} onDeleted={() => (onSelectThread(null), reload())} />
-        </aside>
+        </Drawer>
       )}
       {exporting && <ExportDialog workspaceId={workspaceId} selectedIds={[...selected]} query={query} pages={pages} sites={sites} onClose={() => setExporting(false)} />}
     </div>

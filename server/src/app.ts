@@ -25,6 +25,7 @@ import { registerIntegrationRoutes } from './routes/integrations';
 import { registerTelemetryRoutes } from './routes/telemetry';
 import { registerWsRoutes } from './routes/ws';
 import { startJobs } from './services/jobs';
+import { isRateLimitExempt, rateLimitKey } from './ratelimit';
 
 export interface BuildOptions {
   config?: Partial<Config>;
@@ -64,7 +65,20 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     exposedHeaders: ['content-disposition'],
     maxAge: 600,
   });
-  await app.register(rateLimit, { max: 600, timeWindow: '1 minute', allowList: (req) => req.url.startsWith('/files/') });
+  if (cfg.rateLimit.enabled) {
+    const rl = cfg.rateLimit;
+    await app.register(rateLimit, {
+      timeWindow: rl.window,
+      keyGenerator: (req) => rateLimitKey(cfg.jwtSecret, req),
+      max: (_req, key) => (key.startsWith('ip:') ? rl.anonMax : rl.max),
+      allowList: (req) => isRateLimitExempt(req.method, req.url, req.headers.upgrade),
+      errorResponseBuilder: (_req, context) => ({
+        statusCode: 429,
+        code: 'rate_limited',
+        message: `Too many requests. Please wait ${context.after} and try again.`,
+      }),
+    });
+  }
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 20 } });
   await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
@@ -78,7 +92,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   app.setErrorHandler((err: any, req, reply) => {
     if (err instanceof AppError) return reply.code(err.status).send({ error: { code: err.code, message: err.message } });
     if (err.validation) return reply.code(400).send({ error: { code: 'validation_error', message: err.message } });
-    if (err.statusCode === 429) return reply.code(429).send({ error: { code: 'rate_limited', message: 'Too many requests, slow down' } });
+    if (err.statusCode === 429) return reply.code(429).send({ error: { code: 'rate_limited', message: typeof err.message === 'string' && err.message ? err.message : 'Too many requests. Please wait a moment and try again.' } });
     if (err.code === 'FST_REQ_FILE_TOO_LARGE') return reply.code(413).send({ error: { code: 'file_too_large', message: 'File too large' } });
     if (err.code === 'FST_INVALID_MULTIPART_CONTENT_TYPE') return reply.code(400).send({ error: { code: 'validation_error', message: 'Expected multipart/form-data' } });
     if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: { code: err.code ?? 'bad_request', message: err.message } });

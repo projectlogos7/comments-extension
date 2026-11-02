@@ -17,9 +17,9 @@ import {
   type TicketLink,
 } from '@pinpoint/shared';
 import { errorMessage, useAsync, useMembers, useRole, useUi, useUiEvents } from '../context';
-import { shareUrlFor } from '../host';
-import { Avatar, Badge, capitalize, Empty, ErrorBox, Menu, Modal, RelTime, Skeleton, StatusBadge, type MenuItem } from './common';
+import { Avatar, Badge, capitalize, Empty, ErrorBox, Icon, Menu, Modal, RelTime, Select, Skeleton, StatusBadge, type MenuItem, type SelectOption } from './common';
 import { Composer } from './Composer';
+import { copyThreadLink, ShareDialog } from './Share';
 import { availableCopyFormats, COPY_LABELS, copyText } from './copy';
 
 export const REACTIONS = ['👍', '👀', '✅', '🎉', '❤️', '😕'];
@@ -44,6 +44,7 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
   const [showHistory, setShowHistory] = useState(false);
   const [integrations, setIntegrations] = useState<IntegrationConfig[]>([]);
   const [tickets, setTickets] = useState<TicketLink[]>([]);
+  const [sharing, setSharing] = useState<null | { justCopied: boolean }>(null);
 
   useUiEvents((e) => {
     if (e.kind === 'threads.changed' && (!e.threadId || e.threadId === threadId)) reload();
@@ -97,26 +98,14 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
       await host.copy(text);
     }, `${COPY_LABELS[format]} copied`);
 
-  const copyLink = () =>
+  /** One click: create the link if needed, copy it, then show who can open it. */
+  const share = () =>
     run(async () => {
-      const info = await host.api.shareThread(thread.id);
-      setData({ ...thread, shareToken: info.token });
-      await host.copy(info.url || shareUrlFor(host.serverUrl, info.token)!);
+      if (!can(role, 'createShareLink')) return setSharing({ justCopied: false });
+      const token = await copyThreadLink(host, thread);
+      if (token !== thread.shareToken) setData({ ...thread, shareToken: token });
+      setSharing({ justCopied: true });
     }, 'Link copied');
-
-  const copyPageLink = () =>
-    run(async () => {
-      const info = await host.api.sharePage(thread.pageId);
-      await host.copy(info.url || `${host.serverUrl}/share/${info.token}`);
-    }, 'Page link copied');
-
-  const revokeLink = () =>
-    run(async () => {
-      if (!(await confirm({ title: 'Revoke share link?', body: 'Anyone using the current link will lose access.', confirmLabel: 'Revoke', danger: true }))) return;
-      await host.api.revokeThreadShare(thread.id);
-      setData({ ...thread, shareToken: null });
-      toast('Link revoked', 'success');
-    });
 
   const deleteThread = () =>
     run(async () => {
@@ -130,11 +119,11 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
   const enabledChats = integrations.filter((i) => i.enabled && (i.kind === 'slack' || i.kind === 'teams'));
 
   const menuItems: MenuItem[] = [
-    ...availableCopyFormats(thread).map((f) => ({ label: `Copy as ${COPY_LABELS[f]}`, onSelect: () => doCopy(f) })),
-    ...(can(role, 'createShareLink') ? [{ label: 'Copy link', onSelect: copyLink }, { label: 'Copy page link', onSelect: copyPageLink }] : []),
-    ...(thread.shareToken && (isAuthor || can(role, 'manageSharing')) ? [{ label: 'Revoke link', onSelect: revokeLink, danger: true }] : []),
-    { label: thread.detached ? 'View snapshot' : 'Open on live page', onSelect: () => (thread.detached ? setSnapOpen(thread.snapshots[0] ?? null) : host.openThread(thread, { newTab: true })) },
-    ...enabledTickets.map((i) => ({
+    ...(can(role, 'createShareLink') ? [{ label: 'Share…', icon: 'share' as const, onSelect: () => setSharing({ justCopied: false }) }] : []),
+    { label: thread.detached ? 'View snapshot' : 'Open on live page', icon: 'external' as const, onSelect: () => (thread.detached ? setSnapOpen(thread.snapshots[0] ?? null) : host.openThread(thread, { newTab: true })) },
+    ...availableCopyFormats(thread).map((f, i) => ({ label: `Copy as ${COPY_LABELS[f]}`, icon: i === 0 ? ('copy' as const) : undefined, separator: i === 0, onSelect: () => doCopy(f) })),
+    ...enabledTickets.map((i, n) => ({
+      separator: n === 0,
       label: `Create ${capitalize(i.kind === 'github' ? 'GitHub' : i.kind)} issue`,
       onSelect: () =>
         run(async () => {
@@ -143,11 +132,12 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
           await host.copy(t.url).catch(() => {});
         }, 'Ticket created — link copied'),
     })),
-    ...enabledChats.map((i) => ({
+    ...enabledChats.map((i, n) => ({
+      separator: n === 0 && !enabledTickets.length,
       label: `Post to ${i.kind === 'slack' ? 'Slack' : 'Teams'}`,
       onSelect: () => run(() => host.api.postToChat(thread.id, i.kind as 'slack' | 'teams'), 'Posted'),
     })),
-    ...(isAuthor || can(role, 'deleteAny') ? [{ label: 'Delete thread', onSelect: deleteThread, danger: true }] : []),
+    ...(isAuthor || can(role, 'deleteAny') ? [{ label: 'Delete thread', icon: 'trash' as const, separator: true, onSelect: deleteThread, danger: true }] : []),
   ];
 
   const comments = thread.comments;
@@ -157,17 +147,16 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
   return (
     <article class={`pp-thread ${compact ? 'pp-compact' : ''}`} aria-label={`Thread ${thread.number}`}>
       <header class="pp-thread-head">
-        <div class="pp-row pp-wrap">
+        <div class="pp-thread-bar">
           {onClose && (
-            <button class="pp-icon-btn" aria-label="Back" onClick={onClose}>
-              ←
+            <button class="pp-icon-btn" aria-label={compact ? 'Back to list' : 'Close'} title={compact ? 'Back' : 'Close (Esc)'} onClick={onClose}>
+              <Icon name={compact ? 'arrowLeft' : 'x'} />
             </button>
           )}
-          <span class="pp-pin-num" aria-hidden="true">
-            {thread.number}
+          <span class={`pp-pin-num ${thread.status === 'resolved' ? 'pp-pin-resolved' : ''}`} aria-hidden="true">
+            {thread.scope === 'page' ? 'P' : thread.number}
           </span>
           <StatusBadge status={thread.status} />
-          <Badge tone="scope">{capitalize(thread.scope)}</Badge>
           {thread.detached && (
             <Badge tone="warn" title="The element could not be found on the page">
               Detached
@@ -176,16 +165,12 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
           <span class="pp-grow" />
           {host.focusOnPage && !thread.detached && thread.scope !== 'page' && (
             <button class="pp-icon-btn" title="Show on page" aria-label="Show on page" onClick={() => host.focusOnPage!(thread.id)}>
-              ◎
+              <Icon name="target" />
             </button>
           )}
-          {!compact && (
-            <button
-              class="pp-btn pp-btn-sm"
-              title={thread.detached ? 'The element is detached; opens the snapshot' : 'Open the live page and highlight this comment'}
-              onClick={() => (thread.detached ? setSnapOpen(snapshots[0] ?? null) : host.openThread(thread, { newTab: true }))}
-            >
-              {thread.detached ? 'View snapshot' : 'Open on page ↗'}
+          {can(role, 'createShareLink') && (
+            <button class="pp-btn pp-btn-sm" onClick={share} title="Copy a link to this comment">
+              <Icon name="link" size={14} /> {compact ? 'Share' : 'Copy link'}
             </button>
           )}
           {canResolve && (
@@ -193,63 +178,69 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
               class={`pp-btn pp-btn-sm ${thread.status === 'open' ? 'pp-btn-primary' : ''}`}
               onClick={() => update({ status: thread.status === 'open' ? 'resolved' : 'open' }, thread.status === 'open' ? 'Resolved' : 'Reopened')}
             >
+              {thread.status === 'open' && <Icon name="check" size={14} />}
               {thread.status === 'open' ? 'Resolve' : 'Reopen'}
             </button>
           )}
-          <Menu label="Thread actions" icon="⋯" buttonClass="pp-icon-btn" items={menuItems} />
+          <Menu label="Thread actions" icon={<Icon name="more" />} buttonClass="pp-icon-btn" items={menuItems} />
         </div>
-        <a class="pp-page-link" href={thread.page.normalizedUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => {
-          e.preventDefault();
-          if (thread.detached) setSnapOpen(snapshots[0] ?? null);
-          else host.openThread(thread, { newTab: true });
-        }}>
-          {thread.page.title || thread.page.normalizedUrl}
-        </a>
+        <div class="pp-thread-page">
+          <span class="pp-muted pp-small">{capitalize(thread.scope === 'page' ? 'whole page' : thread.scope)} on</span>{' '}
+          <a
+            class="pp-page-link"
+            href={thread.page.normalizedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={thread.page.normalizedUrl}
+            onClick={(e) => {
+              e.preventDefault();
+              if (thread.detached) setSnapOpen(snapshots[0] ?? null);
+              else host.openThread(thread, { newTab: true });
+            }}
+          >
+            {thread.page.title || thread.page.normalizedUrl}
+            <Icon name="external" size={12} />
+          </a>
+        </div>
         {thread.status === 'resolved' && thread.resolvedAt && (
           <div class="pp-muted pp-small">
             Resolved by {members.find((m) => m.userId === thread.resolvedBy)?.user.name ?? 'someone'} <RelTime iso={thread.resolvedAt} />
           </div>
         )}
         <div class="pp-meta-grid">
-          <label>
-            <span>Assignee</span>
-            <select
+          <div class="pp-meta">
+            <span class="pp-meta-label">Assignee</span>
+            <Select
+              label="Assignee"
+              size="sm"
               disabled={!canEditMeta}
               value={thread.assigneeId ?? ''}
-              onChange={(e) => update({ assigneeId: (e.target as HTMLSelectElement).value || null }, 'Assignee updated')}
-            >
-              <option value="">Unassigned</option>
-              {members
-                .filter((m) => m.role !== 'guest')
-                .map((m) => (
-                  <option key={m.userId} value={m.userId}>
-                    {m.user.name || m.user.email}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <label>
-            <span>Type</span>
-            <select disabled={!canEditMeta} value={thread.type ?? ''} onChange={(e) => update({ type: ((e.target as HTMLSelectElement).value || null) as ThreadType | null })}>
-              <option value="">None</option>
-              {THREAD_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {capitalize(t)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Priority</span>
-            <select disabled={!canEditMeta} value={thread.priority ?? ''} onChange={(e) => update({ priority: ((e.target as HTMLSelectElement).value || null) as Priority | null })}>
-              <option value="">None</option>
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {capitalize(p)}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={(v) => update({ assigneeId: v || null }, v ? 'Assigned' : 'Unassigned')}
+              options={assigneeOptions(members)}
+            />
+          </div>
+          <div class="pp-meta">
+            <span class="pp-meta-label">Type</span>
+            <Select
+              label="Type"
+              size="sm"
+              disabled={!canEditMeta}
+              value={thread.type ?? ''}
+              onChange={(v) => update({ type: (v || null) as ThreadType | null })}
+              options={[{ value: '', label: 'None' }, ...THREAD_TYPES.map((t) => ({ value: t, label: capitalize(t) }))]}
+            />
+          </div>
+          <div class="pp-meta">
+            <span class="pp-meta-label">Priority</span>
+            <Select
+              label="Priority"
+              size="sm"
+              disabled={!canEditMeta}
+              value={thread.priority ?? ''}
+              onChange={(v) => update({ priority: (v || null) as Priority | null })}
+              options={[{ value: '', label: 'None' }, ...PRIORITIES.map((p) => ({ value: p, label: capitalize(p), icon: <span class={`pp-prio-dot pp-prio-${p}`} /> }))]}
+            />
+          </div>
         </div>
         {thread.detached && (
           <div class="pp-notice" role="note">
@@ -330,8 +321,20 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
       </section>
 
       {snapOpen && <SnapshotModal snap={snapOpen} onClose={() => setSnapOpen(null)} />}
+      {sharing && (
+        <ShareDialog thread={thread} justCopied={sharing.justCopied} onClose={() => setSharing(null)} onTokenChange={(t) => setData({ ...thread, shareToken: t })} />
+      )}
     </article>
   );
+}
+
+export function assigneeOptions(members: Member[]): SelectOption[] {
+  return [
+    { value: '', label: 'Unassigned' },
+    ...members
+      .filter((m) => m.role !== 'guest')
+      .map((m) => ({ value: m.userId, label: m.user.name || m.user.email, icon: <Avatar user={m.user} size={18} /> })),
+  ];
 }
 
 function SnapshotThumb({ snap, onOpen }: { snap: Snapshot; onOpen: () => void }) {
@@ -463,9 +466,9 @@ function CommentItem({
         {(mine || canDeleteAny) && (
           <Menu
             label="Comment actions"
-            icon="⋯"
-            buttonClass="pp-icon-btn pp-icon-sm"
-            items={[...(mine ? [{ label: 'Edit', onSelect: () => setEditing(true) }] : []), { label: 'Delete', onSelect: del, danger: true }]}
+            icon={<Icon name="more" size={15} />}
+            buttonClass="pp-icon-btn pp-icon-sm pp-comment-menu"
+            items={[...(mine ? [{ label: 'Edit', onSelect: () => setEditing(true) }] : []), { label: 'Delete', icon: 'trash' as const, onSelect: del, danger: true }]}
           />
         )}
       </div>
@@ -508,7 +511,7 @@ function CommentItem({
               {r.emoji} {r.userIds.length}
             </button>
           ))}
-        <Menu label="Add reaction" icon="☺+" buttonClass="pp-reaction pp-reaction-add" items={REACTIONS.map((e) => ({ label: e, onSelect: () => react(e) }))} />
+        <Menu label="Add reaction" icon={<Icon name="smile" size={15} />} buttonClass="pp-reaction pp-reaction-add" align="start" items={REACTIONS.map((e) => ({ label: e, onSelect: () => react(e) }))} />
       </div>
     </div>
   );

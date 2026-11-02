@@ -133,7 +133,7 @@ export function registerShareRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (r.status === 'auth') return reply.code(401).type('text/plain').send('Sign in required');
     if (r.status === 'forbidden') return reply.code(403).type('text/plain').send('Forbidden');
     reply.header('cache-control', 'private, no-store');
-    return reply.type('text/html; charset=utf-8').send(renderThreadsHtml(r.view, { extensionIds: ctx.cfg.extensionIds }));
+    return reply.type('text/html; charset=utf-8').send(renderThreadsHtml(r.view, { extensionIds: ctx.cfg.extensionIds, publicUrl: ctx.cfg.publicUrl }));
   });
 
   app.get<{ Params: { token: string } }>('/share/:token', async (req, reply) => {
@@ -148,7 +148,12 @@ export function registerShareRoutes(app: FastifyInstance, ctx: AppCtx) {
     reply.header('referrer-policy', 'no-referrer');
     reply.header('cache-control', 'private, no-store');
     reply.type('text/html; charset=utf-8');
-    if (r.status === 'gone') return reply.code(404).send(renderNotFoundPage());
+    if (r.status === 'gone') {
+      const { rows: rev } = /^[A-Za-z0-9_-]{16,64}$/.test(req.params.token)
+        ? await ctx.db.query('SELECT 1 FROM share_links WHERE token = $1 AND revoked_at IS NOT NULL', [req.params.token])
+        : { rows: [] as unknown[] };
+      return reply.code(404).send(renderNotFoundPage(rev.length ? 'revoked' : 'missing', ctx.cfg.publicUrl));
+    }
     const providers = { google: !!ctx.cfg.google, microsoft: !!ctx.cfg.microsoft };
     const url = shareUrl(ctx, req.params.token);
     if (r.status === 'ok') {
@@ -163,7 +168,7 @@ export function registerShareRoutes(app: FastifyInstance, ctx: AppCtx) {
           url,
           publicUrl: ctx.cfg.publicUrl,
           extensionIds: ctx.cfg.extensionIds,
-          contentHtml: renderThreadsHtml(r.view, { extensionIds: ctx.cfg.extensionIds }),
+          contentHtml: renderThreadsHtml(r.view, { extensionIds: ctx.cfg.extensionIds, publicUrl: ctx.cfg.publicUrl }),
           token: req.params.token,
           providers,
         }),

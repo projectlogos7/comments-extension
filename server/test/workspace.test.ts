@@ -120,3 +120,26 @@ describe('workspaces', () => {
     expect((await t.req('GET', `/api/v1/threads/${a.id}`, guest)).status).toBe(404);
   });
 });
+
+describe('invite resend', () => {
+  it('re-sends the same link, skips existing members, admin only', async () => {
+    await t.req('PATCH', `/api/v1/workspaces/${ws}`, owner, { emailDomain: null });
+    const r = await t.req('POST', `/api/v1/workspaces/${ws}/invites`, owner, { emails: ['new.person@acme.com', 'owner@acme.com'] });
+    expect(r.status).toBe(200);
+    expect(r.json.map((i: any) => i.email)).toEqual(['new.person@acme.com']);
+    const first = t.ctx.mailer.outbox.at(-1)!;
+    const before = t.ctx.mailer.outbox.length;
+    const again = await t.req('POST', `/api/v1/workspaces/${ws}/invites/${r.json[0].id}/resend`, owner);
+    expect(again.status).toBe(200);
+    expect(t.ctx.mailer.outbox.length).toBe(before + 1);
+    const second = t.ctx.mailer.outbox.at(-1)!;
+    expect(second.to).toBe('new.person@acme.com');
+    expect(second.text.match(/invite\/(inv_[\w-]+)/)![1]).toBe(first.text.match(/invite\/(inv_[\w-]+)/)![1]);
+    const member = await t.login('plain@acme.com');
+    const link = (await t.req('GET', '/api/v1/me', owner)).json.memberships[0].workspace.inviteToken;
+    if (link) await t.req('POST', `/api/v1/invites/${link}/accept`, member);
+    expect((await t.req('POST', `/api/v1/workspaces/${ws}/invites/${r.json[0].id}/resend`, member)).status).toBe(403);
+    await t.req('DELETE', `/api/v1/workspaces/${ws}/invites/${r.json[0].id}`, owner);
+    expect((await t.req('POST', `/api/v1/workspaces/${ws}/invites/${r.json[0].id}/resend`, owner)).status).toBe(404);
+  });
+});

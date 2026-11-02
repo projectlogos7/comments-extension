@@ -149,7 +149,7 @@ export class ApiClient {
     return this.opts.baseUrl.replace(/\/$/, '');
   }
 
-  async request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
+  async request<T>(method: string, path: string, body?: unknown, retry = true, rateRetry = true): Promise<T> {
     const f = this.opts.fetch ?? fetch;
     const token = await this.opts.getToken();
     const headers: Record<string, string> = {};
@@ -162,7 +162,14 @@ export class ApiClient {
     if (token) headers.authorization = `Bearer ${token}`;
     const res = await f(`${this.baseUrl}/api/v1${path}`, { method, headers, body: payload });
     if (res.status === 401 && retry && this.opts.onUnauthorized) {
-      if (await this.opts.onUnauthorized()) return this.request<T>(method, path, body, false);
+      if (await this.opts.onUnauthorized()) return this.request<T>(method, path, body, false, rateRetry);
+    }
+    if (res.status === 429 && rateRetry) {
+      // Rate limited: wait for Retry-After (capped at 5 s) and try once more.
+      const after = Number(res.headers.get('retry-after'));
+      const waitMs = Math.min(5000, Math.max(250, Number.isFinite(after) && after > 0 ? after * 1000 : 1000));
+      await new Promise((r) => setTimeout(r, waitMs));
+      return this.request<T>(method, path, body, retry, false);
     }
     if (!res.ok) {
       let code = 'http_error';
@@ -245,6 +252,10 @@ export class ApiClient {
   }
   invite(ws: string, emails: string[], role: Role = 'member') {
     return this.request<Invite[]>('POST', `/workspaces/${ws}/invites`, { emails, role });
+  }
+  /** Send the invitation email again (same link). */
+  resendInvite(ws: string, inviteId: string) {
+    return this.request<Invite>('POST', `/workspaces/${ws}/invites/${inviteId}/resend`);
   }
   revokeInvite(ws: string, inviteId: string) {
     return this.request<void>('DELETE', `/workspaces/${ws}/invites/${inviteId}`);

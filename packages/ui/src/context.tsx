@@ -2,6 +2,7 @@ import { createContext, type ComponentChildren } from 'preact';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Member, Membership, Role } from '@pinpoint/shared';
 import type { Session, UiEvent, UiHost } from './host';
+import { Portal, useLayer } from './components/common';
 
 interface Toast {
   id: number;
@@ -34,6 +35,8 @@ export function UiProvider({ host, children }: { host: UiHost; children: Compone
   const [confirmState, setConfirm] = useState<ConfirmState | null>(null);
   const membersCache = useRef(new Map<string, Member[]>()).current;
   const nextId = useRef(1);
+  const toastsRef = useRef<Toast[]>([]);
+  toastsRef.current = toasts;
 
   useEffect(
     () =>
@@ -44,6 +47,11 @@ export function UiProvider({ host, children }: { host: UiHost; children: Compone
   );
 
   const toast = useCallback((text: string, tone: Toast['tone'] = 'info') => {
+    // Rate limiting is not a failure the user caused: show it calmly, once.
+    if (text === RATE_LIMIT_MESSAGE) {
+      tone = 'info';
+      if (toastsRef.current.some((x) => x.text === text)) return;
+    }
     const id = nextId.current++;
     setToasts((t) => [...t, { id, text, tone }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === 'error' ? 6000 : 3000);
@@ -62,7 +70,11 @@ export function UiProvider({ host, children }: { host: UiHost; children: Compone
       <div class="pp-toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} class={`pp-toast pp-toast-${t.tone}`}>
-            {t.text}
+            <span class="pp-toast-dot" aria-hidden="true" />
+            <span class="pp-grow">{t.text}</span>
+            <button class="pp-toast-close" aria-label="Dismiss" onClick={() => setToasts((all) => all.filter((x) => x.id !== t.id))}>
+              ×
+            </button>
           </div>
         ))}
       </div>
@@ -81,28 +93,31 @@ export function UiProvider({ host, children }: { host: UiHost; children: Compone
 
 function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose: (ok: boolean) => void }) {
   const btn = useRef<HTMLButtonElement>(null);
+  useLayer(true, () => onClose(false));
   useEffect(() => btn.current?.focus(), []);
   return (
-    <div class="pp-modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose(false)}>
-      <div
-        class="pp-modal pp-modal-sm"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="pp-confirm-title"
-        onKeyDown={(e) => e.key === 'Escape' && onClose(false)}
-      >
-        <h2 id="pp-confirm-title">{state.title}</h2>
-        {state.body && <p class="pp-muted">{state.body}</p>}
-        <div class="pp-row pp-end">
-          <button class="pp-btn" onClick={() => onClose(false)}>
-            Cancel
-          </button>
-          <button ref={btn} class={`pp-btn ${state.danger ? 'pp-btn-danger' : 'pp-btn-primary'}`} onClick={() => onClose(true)}>
-            {state.confirmLabel ?? 'Confirm'}
-          </button>
+    <Portal>
+      <div class="pp-modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose(false)}>
+        <div class="pp-modal pp-modal-sm" role="alertdialog" aria-modal="true" aria-labelledby="pp-confirm-title" aria-describedby={state.body ? 'pp-confirm-body' : undefined}>
+          <div class="pp-modal-body">
+            <h2 id="pp-confirm-title">{state.title}</h2>
+            {state.body && (
+              <p id="pp-confirm-body" class="pp-muted">
+                {state.body}
+              </p>
+            )}
+          </div>
+          <div class="pp-modal-foot">
+            <button class="pp-btn" onClick={() => onClose(false)}>
+              Cancel
+            </button>
+            <button ref={btn} class={`pp-btn ${state.danger ? 'pp-btn-danger-solid' : 'pp-btn-primary'}`} onClick={() => onClose(true)}>
+              {state.confirmLabel ?? 'Confirm'}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Portal>
   );
 }
 
@@ -114,6 +129,22 @@ export function useUi(): UiContextValue {
 
 export function useHost(): UiHost {
   return useUi().host;
+}
+
+/**
+ * Run `fn` at most once per `ms` burst of matching live events (realtime events often arrive in
+ * groups — e.g. a reply creates comment + thread + notification events).
+ */
+export function useDebouncedUiEvents(match: (e: UiEvent) => boolean, fn: () => void, deps: unknown[] = [], ms = 300) {
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useUiEvents((e) => {
+    if (!match(e)) return;
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => fnRef.current(), ms);
+  }, deps);
 }
 
 /** Subscribe to live events for the lifetime of the component. */
@@ -181,7 +212,15 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): { data: T | 
   return { data, error, loading, reload, setData };
 }
 
+export const RATE_LIMIT_MESSAGE = 'Slow down a moment… too many requests. Try again in a few seconds.';
+
+/** Human message for an error, with friendly wording for common transport problems. */
 export function errorMessage(e: unknown): string {
-  if (e && typeof e === 'object' && 'message' in e) return String((e as Error).message);
+  const anyE = e as { status?: number; code?: string; message?: string } | null;
+  if (anyE && typeof anyE === 'object') {
+    if (anyE.status === 429 || anyE.code === 'rate_limited') return RATE_LIMIT_MESSAGE;
+    if (anyE instanceof TypeError && /fetch|network/i.test(String(anyE.message))) return 'Can’t reach the Pinpoint server. Check your connection and try again.';
+    if ('message' in anyE && anyE.message) return String(anyE.message);
+  }
   return String(e);
 }

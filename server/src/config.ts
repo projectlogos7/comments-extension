@@ -27,6 +27,35 @@ export interface Config {
   logger: boolean;
   /** Directory of the built web app (served at /app/). */
   webDir: string;
+  rateLimit: RateLimitConfig;
+}
+
+export interface RateLimitConfig {
+  enabled: boolean;
+  /** Requests per window for a signed-in user or API key (keyed by user / key, not IP). */
+  max: number;
+  /** Requests per window for anonymous requests (keyed by IP). */
+  anonMax: number;
+  /** Window, e.g. "1 minute" or a number of milliseconds. */
+  window: string | number;
+  /** Sign-in email requests per window per IP. */
+  authEmailMax: number;
+}
+
+function intEnv(v: string | undefined, def: number): number {
+  const n = Number(v);
+  return v !== undefined && v !== '' && Number.isFinite(n) && n > 0 ? Math.floor(n) : def;
+}
+
+export function loadRateLimitConfig(env: NodeJS.ProcessEnv): RateLimitConfig {
+  const w = env.RATE_LIMIT_WINDOW;
+  return {
+    enabled: !(env.RATE_LIMIT_ENABLED === '0' || env.RATE_LIMIT_ENABLED === 'false'),
+    max: intEnv(env.RATE_LIMIT_MAX, 1200),
+    anonMax: intEnv(env.RATE_LIMIT_ANON_MAX, 120),
+    window: w ? (/^\d+$/.test(w) ? Number(w) : w) : '1 minute',
+    authEmailMax: intEnv(env.RATE_LIMIT_AUTH_EMAIL_MAX, 5),
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Partial<Config> = {}): Config {
@@ -60,6 +89,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     jobs: env.JOBS !== '0',
     logger: env.LOG !== '0',
     webDir: env.WEB_DIR || path.join(SERVER_ROOT, 'public', 'app'),
+    rateLimit: loadRateLimitConfig(env),
     ...overrides,
   };
   if (!cfg.jwtSecret) {

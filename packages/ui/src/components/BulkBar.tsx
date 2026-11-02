@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { can, PRIORITIES, THREAD_TYPES, type BulkAction, type Member, type Priority, type ThreadType } from '@pinpoint/shared';
 import { errorMessage, useRole, useUi } from '../context';
-import { capitalize } from './common';
+import { capitalize, Icon, Menu, type MenuItem } from './common';
 
 export interface BulkBarProps {
   workspaceId: string;
@@ -34,85 +34,55 @@ export function BulkBar({ workspaceId, ids, members, onDone, onClear, onExport }
       setBusy(false);
     }
   };
-  const val = (e: Event) => (e.target as HTMLSelectElement).value;
+  const assignItems: MenuItem[] = [
+    { label: 'Unassign', onSelect: () => run({ action: 'assign', assigneeId: null }, 'Unassigned') },
+    ...members
+      .filter((m) => m.role !== 'guest')
+      .map((m) => ({ label: m.user.name || m.user.email, onSelect: () => run({ action: 'assign', assigneeId: m.userId }, 'Assigned') })),
+  ];
+  const typeItems: MenuItem[] = [
+    { label: 'None', onSelect: () => run({ action: 'type', type: null }, 'Type cleared') },
+    ...THREAD_TYPES.map((t) => ({ label: capitalize(t), onSelect: () => run({ action: 'type', type: t as ThreadType }, 'Type set') })),
+  ];
+  const prioItems: MenuItem[] = [
+    { label: 'None', onSelect: () => run({ action: 'priority', priority: null }, 'Priority cleared') },
+    ...PRIORITIES.map((p) => ({ label: capitalize(p), onSelect: () => run({ action: 'priority', priority: p as Priority }, 'Priority set') })),
+  ];
 
   return (
     <div class="pp-bulkbar" role="toolbar" aria-label="Bulk actions">
       <strong>{ids.length} selected</strong>
+      <span class="pp-bulk-sep" aria-hidden="true" />
       <button class="pp-btn pp-btn-sm" disabled={busy} onClick={() => run({ action: 'resolve' }, 'Resolved')}>
-        Resolve
+        <Icon name="check" size={14} /> Resolve
       </button>
       <button class="pp-btn pp-btn-sm" disabled={busy} onClick={() => run({ action: 'reopen' }, 'Reopened')}>
         Reopen
       </button>
       {can(role, 'assign') && (
-        <select
-          aria-label="Assign selected"
-          disabled={busy}
-          value=""
-          onChange={(e) => {
-            const v = val(e);
-            if (v) run({ action: 'assign', assigneeId: v === '__none' ? null : v }, 'Assigned');
-          }}
-        >
-          <option value="">Assign…</option>
-          <option value="__none">Unassign</option>
-          {members
-            .filter((m) => m.role !== 'guest')
-            .map((m) => (
-              <option key={m.userId} value={m.userId}>
-                {m.user.name || m.user.email}
-              </option>
-            ))}
-        </select>
+        <Menu label="Assign selected" align="start" items={assignItems}>
+          Assign <Icon name="chevron" size={13} />
+        </Menu>
       )}
-      <select
-        aria-label="Set type"
-        disabled={busy}
-        value=""
-        onChange={(e) => {
-          const v = val(e);
-          if (v) run({ action: 'type', type: v === '__none' ? null : (v as ThreadType) }, 'Type set');
-        }}
-      >
-        <option value="">Type…</option>
-        <option value="__none">None</option>
-        {THREAD_TYPES.map((t) => (
-          <option key={t} value={t}>
-            {capitalize(t)}
-          </option>
-        ))}
-      </select>
-      <select
-        aria-label="Set priority"
-        disabled={busy}
-        value=""
-        onChange={(e) => {
-          const v = val(e);
-          if (v) run({ action: 'priority', priority: v === '__none' ? null : (v as Priority) }, 'Priority set');
-        }}
-      >
-        <option value="">Priority…</option>
-        <option value="__none">None</option>
-        {PRIORITIES.map((t) => (
-          <option key={t} value={t}>
-            {capitalize(t)}
-          </option>
-        ))}
-      </select>
+      <Menu label="Set type" align="start" items={typeItems}>
+        Type <Icon name="chevron" size={13} />
+      </Menu>
+      <Menu label="Set priority" align="start" items={prioItems}>
+        Priority <Icon name="chevron" size={13} />
+      </Menu>
       {can(role, 'export') && (
         <button class="pp-btn pp-btn-sm" onClick={onExport}>
-          Export…
+          <Icon name="download" size={14} /> Export
         </button>
       )}
       {can(role, 'deleteAny') && (
-        <button class="pp-btn pp-btn-sm pp-btn-danger" disabled={busy} onClick={() => run({ action: 'delete' }, 'Deleted')}>
-          Delete
+        <button class="pp-btn pp-btn-sm pp-danger" disabled={busy} onClick={() => run({ action: 'delete' }, 'Deleted')}>
+          <Icon name="trash" size={14} /> Delete
         </button>
       )}
       <span class="pp-grow" />
-      <button class="pp-link-btn" onClick={onClear}>
-        Clear selection
+      <button class="pp-icon-btn" aria-label="Clear selection" title="Clear selection" onClick={onClear}>
+        <Icon name="x" />
       </button>
     </div>
   );

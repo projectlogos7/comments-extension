@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { can, canChangeRole, normalizeSitePattern, type Membership, type Role } from '@pinpoint/shared';
+import { can, canChangeRole, escapeHtml, normalizeSitePattern, type Membership, type Role } from '@pinpoint/shared';
 import type { AppCtx } from '../context';
 import { requireAuth, requireRole, requireUser, isUuid } from '../context';
 import { randomToken } from '../crypto';
@@ -34,6 +34,22 @@ async function membershipFor(ctx: AppCtx, workspaceId: string, userId: string): 
   const { rows } = await ctx.db.query('SELECT id FROM members WHERE workspace_id = $1 AND user_id = $2', [workspaceId, userId]);
   const member = await loadMember(ctx, rows[0].id);
   return { workspace: toWorkspace(ws, member!.role === 'owner' || member!.role === 'admin'), member: member! };
+}
+
+async function sendInviteEmail(ctx: AppCtx, ws: { id: string; name: string }, email: string, token: string, inviterName?: string | null) {
+  const url = inviteUrl(ctx, token);
+  const who = inviterName || 'A teammate';
+  await ctx.mailer.send({
+    to: email,
+    subject: `${who} invited you to ${ws.name} on Pinpoint`,
+    text: `${who} invited you to join the "${ws.name}" workspace on Pinpoint, where your team comments directly on web pages.\n\nAccept the invitation: ${url}\n\nIf you weren't expecting this, you can ignore this email.`,
+    html: emailLayout(
+      `Join ${ws.name} on Pinpoint`,
+      `<p><strong>${escapeHtml(who)}</strong> invited you to join <strong>${escapeHtml(ws.name)}</strong>, where your team points at any part of a web page and comments on it.</p><p style="color:#6b6b80;font-size:13px">If you weren't expecting this, you can ignore this email.</p>`,
+      { label: 'Accept invitation', url },
+      'You received this because someone invited you to a Pinpoint workspace.',
+    ),
+  });
 }
 
 function inviteUrl(ctx: AppCtx, token: string) {
@@ -185,12 +201,24 @@ export function registerWorkspaceRoutes(app: FastifyInstance, ctx: AppCtx) {
     if (body.role === 'owner' && actorRole !== 'owner') throw forbidden('Only owners can invite owners');
     const ws = await workspaceRow(ctx, req.params.ws);
     const { rows: inviter } = await ctx.db.query('SELECT name FROM users WHERE id = $1', [p.userId]);
-    const out = [];
-    for (const raw of body.emails) {
-      const email = normalizeEmail(raw);
-      if (body.role !== 'guest' && ws.email_domain && domainOf(email) !== ws.email_domain) {
-        throw badRequest(`${email} is outside the allowed domain @${ws.email_domain}`, 'domain_restricted');
+    const emails = [...new Set(body.emails.map(normalizeEmail))];
+    if (body.role !== 'guest' && ws.email_domain) {
+      const outside = emails.filter((e) => domainOf(e) !== ws.email_domain);
+      if (outside.length) {
+        throw badRequest(
+          `Only people with an @${ws.email_domain} email can join this workspace, so ${outside.join(', ')} can't be invited. Ask an admin to change the email domain setting, or invite them as a guest.`,
+          'domain_restricted',
+        );
       }
+    }
+    const { rows: existing } = await ctx.db.query(
+      'SELECT lower(u.email) AS email FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = $1 AND lower(u.email) = ANY($2::text[])',
+      [ws.id, emails],
+    );
+    const already = new Set(existing.map((r: any) => r.email as string));
+    const out = [];
+    for (const email of emails) {
+      if (already.has(email)) continue;
       const token = 'inv_' + randomToken(24);
       await ctx.db.query(`UPDATE invites SET revoked_at = now() WHERE workspace_id = $1 AND lower(email) = $2 AND accepted_at IS NULL AND revoked_at IS NULL`, [
         ws.id,
@@ -201,19 +229,24 @@ export function registerWorkspaceRoutes(app: FastifyInstance, ctx: AppCtx) {
         [ws.id, email, body.role, token, p.userId],
       );
       out.push(toInvite(rows[0]));
-      const url = inviteUrl(ctx, token);
-      const who = inviter[0]?.name || 'A teammate';
-      await ctx.mailer.send({
-        to: email,
-        subject: `${who} invited you to ${ws.name} on Pinpoint`,
-        text: `${who} invited you to join the "${ws.name}" workspace on Pinpoint.\n\nAccept: ${url}`,
-        html: emailLayout(`Join ${ws.name} on Pinpoint`, `<p>${who} invited you to comment on web pages with the ${ws.name} team.</p>`, {
-          label: 'Accept invitation',
-          url,
-        }),
-      });
+      await sendInviteEmail(ctx, ws, email, token, inviter[0]?.name);
     }
     return out;
+  });
+
+  app.post<{ Params: { ws: string; id: string } }>('/api/v1/workspaces/:ws/invites/:id/resend', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
+    const p = await requireAuth(ctx, req);
+    await requireRole(ctx, p, req.params.ws, 'manageMembers');
+    if (!isUuid(req.params.id)) throw notFound('Invite');
+    const { rows } = await ctx.db.query(
+      'SELECT * FROM invites WHERE id = $1 AND workspace_id = $2 AND revoked_at IS NULL AND accepted_at IS NULL',
+      [req.params.id, req.params.ws],
+    );
+    if (!rows[0]) throw notFound('Invite');
+    const ws = await workspaceRow(ctx, req.params.ws);
+    const { rows: inviter } = await ctx.db.query('SELECT name FROM users WHERE id = $1', [p.userId]);
+    await sendInviteEmail(ctx, ws, rows[0].email, rows[0].token, inviter[0]?.name);
+    return toInvite(rows[0]);
   });
 
   app.delete<{ Params: { ws: string; id: string } }>('/api/v1/workspaces/:ws/invites/:id', async (req, reply) => {
