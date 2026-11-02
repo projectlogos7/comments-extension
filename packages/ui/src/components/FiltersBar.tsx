@@ -9,6 +9,8 @@ export interface FiltersBarProps {
   sites?: string[];
   pages?: Pick<Page, 'id' | 'title' | 'normalizedUrl' | 'site'>[];
   onChange: (filters: ThreadFilters, sort: ThreadSort) => void;
+  /** What "Clear filters" goes back to (default: no filters). */
+  defaults?: ThreadFilters;
 }
 
 /** Remove empty values so filter objects compare and serialize cleanly. */
@@ -40,7 +42,7 @@ function memberOptions(members: Member[], any: string, extra: SelectOption[] = [
   ];
 }
 
-export function FiltersBar({ filters, sort, members, sites = [], pages = [], onChange }: FiltersBarProps) {
+export function FiltersBar({ filters, sort, members, sites = [], pages = [], onChange, defaults = {} }: FiltersBarProps) {
   const [q, setQ] = useState(filters.q ?? '');
   const [moreOpen, setMoreOpen] = useState(false);
   const moreBtn = useRef<HTMLButtonElement>(null);
@@ -105,8 +107,8 @@ export function FiltersBar({ filters, sort, members, sites = [], pages = [], onC
         {moreCount > 0 && <span class="pp-count-pill">{moreCount}</span>}
       </button>
       <span class="pp-grow" />
-      {activeFilterCount(filters) > 0 && (
-        <button type="button" class="pp-link-btn pp-small" onClick={() => onChange(filters.q ? { q: filters.q } : {}, sort)}>
+      {JSON.stringify(cleanFilters({ ...filters, q: undefined })) !== JSON.stringify(cleanFilters(defaults)) && (
+        <button type="button" class="pp-link-btn pp-small" onClick={() => onChange(cleanFilters({ ...defaults, q: filters.q }), sort)}>
           Clear filters
         </button>
       )}

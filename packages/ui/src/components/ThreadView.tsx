@@ -170,7 +170,8 @@ export function ThreadView({ threadId, onClose, onDeleted, compact }: ThreadView
           )}
           {can(role, 'createShareLink') && (
             <button class="pp-btn pp-btn-sm" onClick={share} title="Copy a link to this comment">
-              <Icon name="link" size={14} /> {compact ? 'Share' : 'Copy link'}
+              <Icon name="link" size={14} />
+              <span class="pp-btn-label">{compact ? 'Share' : 'Copy link'}</span>
             </button>
           )}
           {canResolve && (

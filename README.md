@@ -62,5 +62,5 @@ See `.env.example` and `docs/SERVER.md`. Set `PINPOINT_SERVER_ORIGINS` when buil
 
 - Google/Microsoft sign-in, Jira, Microsoft Teams and S3 storage have not been tested against the real services. GitHub, Linear and Slack were tested against mocked HTTP only.
 - Chrome only allows screen capture after a user gesture (`activeTab`) or with access to all sites. Comments started from the selected-text button, and re-attaching a thread, save without a snapshot unless the user grants access to all sites.
-- Rate limits are kept in memory per server instance.
+- Rate limits (per user / API key, configurable with `RATE_LIMIT_*`, see `docs/SERVER.md`) are kept in memory per server instance.
 - Firefox and Safari are out of scope, as the PRD says.

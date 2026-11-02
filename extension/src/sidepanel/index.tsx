@@ -2,11 +2,15 @@
 // threads at the bottom, inline thread view, inbox, and the entry points into comment mode.
 import '@pinpoint/ui/styles.css';
 import { render } from 'preact';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { AnchorStatus, Notification, PageInfo, Thread } from '@pinpoint/shared';
 import {
-  Badge,
   Empty,
+  Icon,
+  Kbd,
+  Select,
+  useDebouncedCallback,
+  useLayer,
   ErrorBox,
   Inbox,
   Skeleton,
@@ -74,6 +78,10 @@ function Panel({ host }: { host: ExtensionHost }) {
   );
 
   const reload = useCallback(() => loadPage().then(loadThreads), [loadPage, loadThreads]);
+  // Realtime events arrive in bursts (comment + thread + notification): reload once per burst.
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const reloadThreadsSoon = useDebouncedCallback(() => loadThreads(pageRef.current), 300);
 
   useEffect(() => {
     setThreads(null);
@@ -86,7 +94,7 @@ function Panel({ host }: { host: ExtensionHost }) {
       if (e.kind === 'page.changed') {
         if (fixedTabId === null) setOpenId(null);
         reload();
-      } else if (e.kind === 'threads.changed' && (!ws || e.workspaceId === ws)) loadThreads(page);
+      } else if (e.kind === 'threads.changed' && (!ws || e.workspaceId === ws)) reloadThreadsSoon();
       else if (e.kind === 'page.anchors' && e.tabId === host.tabId) setAnchors(e.anchors);
       else if (e.kind === 'thread.selected' && (e.tabId === undefined || e.tabId === host.tabId)) {
         setTab('page');
@@ -95,6 +103,9 @@ function Panel({ host }: { host: ExtensionHost }) {
     },
     [ws, page, reload, loadThreads],
   );
+
+  // Esc in an open thread goes back to the list (menus and dialogs inside close first).
+  useLayer(!!openId, () => setOpenId(null));
 
   const groups = useMemo(() => orderPanelThreads(applyQuickFilter(threads ?? [], filter, session.me?.user.id), anchors), [threads, anchors, filter, session.me]);
 
@@ -173,7 +184,7 @@ function Panel({ host }: { host: ExtensionHost }) {
         {!page.active && <p class="pp-status-line">Reload the page to show pins and select elements.</p>}
         {total === 0 && (
           <Empty title={threads.length ? 'No threads match' : 'No comments on this page yet'}>
-            Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> or use “Comment” to point at something.
+            Press <Kbd>Alt</Kbd>+<Kbd>Shift</Kbd>+<Kbd>C</Kbd> or use “Comment” to point at something.
           </Empty>
         )}
         {groups.page.length > 0 && (
@@ -224,17 +235,15 @@ function Panel({ host }: { host: ExtensionHost }) {
     <div class="pp-sp">
       <header class="pp-sp-head">
         <div class="pp-row">
-          <span class="pp-logo" aria-hidden="true">
-            ◉
-          </span>
+          <span class="pp-logo" aria-hidden="true" />
           <WorkspaceSwitcher />
           <span class="pp-grow" />
           <button class="pp-icon-btn" title="All comments" aria-label="Open all comments" onClick={openAll}>
-            ☰
+            <Icon name="external" />
           </button>
           {embedded && (
             <button class="pp-icon-btn" aria-label="Close panel" onClick={() => host.tabCommand({ kind: 'panel.toggle' }).catch(() => {})}>
-              ×
+              <Icon name="x" />
             </button>
           )}
         </div>
@@ -243,14 +252,14 @@ function Panel({ host }: { host: ExtensionHost }) {
             This page{threads ? ` (${threads.length})` : ''}
           </button>
           <button role="tab" aria-selected={tab === 'inbox'} class={tab === 'inbox' ? 'pp-active' : ''} onClick={() => setTab('inbox')}>
-            Inbox {counts.notifications > 0 && <Badge tone="scope">{counts.notifications}</Badge>}
+            Inbox {counts.notifications > 0 && <span class="pp-nav-badge">{counts.notifications}</span>}
           </button>
         </div>
         {tab === 'page' && !openId && page?.allowed && page.hasPermission && (
           <>
             <div class="pp-row pp-wrap">
               <button class="pp-btn pp-btn-primary pp-btn-sm" onClick={() => command('commentMode.start')} title="Alt+Shift+C">
-                + Comment
+                <Icon name="plus" size={14} /> Comment
               </button>
               <button class="pp-btn pp-btn-sm" onClick={() => command('pageComment.start')}>
                 Page comment
@@ -261,21 +270,34 @@ function Panel({ host }: { host: ExtensionHost }) {
               </button>
             </div>
             <div class="pp-filter-row">
-              <select aria-label="Status" value={filter.status} onChange={(e) => setFilter({ ...filter, status: (e.target as HTMLSelectElement).value as QuickFilter['status'] })}>
-                <option value="open">Open</option>
-                <option value="resolved">Resolved</option>
-                <option value="all">All</option>
-              </select>
-              <select aria-label="Scope" value={filter.scope} onChange={(e) => setFilter({ ...filter, scope: (e.target as HTMLSelectElement).value as QuickFilter['scope'] })}>
-                <option value="all">Any scope</option>
-                <option value="area">Area</option>
-                <option value="section">Section</option>
-                <option value="page">Page</option>
-              </select>
-              <label class="pp-toggle">
-                <input type="checkbox" checked={filter.mine} onChange={(e) => setFilter({ ...filter, mine: (e.target as HTMLInputElement).checked })} />
-                <span>Mine</span>
-              </label>
+              <Select<QuickFilter['status']>
+                label="Status"
+                size="sm"
+                highlight={filter.status !== 'open'}
+                value={filter.status}
+                onChange={(v) => setFilter({ ...filter, status: v })}
+                options={[
+                  { value: 'open', label: 'Open' },
+                  { value: 'resolved', label: 'Resolved' },
+                  { value: 'all', label: 'All' },
+                ]}
+              />
+              <Select<QuickFilter['scope']>
+                label="Scope"
+                size="sm"
+                highlight={filter.scope !== 'all'}
+                value={filter.scope}
+                onChange={(v) => setFilter({ ...filter, scope: v })}
+                options={[
+                  { value: 'all', label: 'Any scope' },
+                  { value: 'area', label: 'Area' },
+                  { value: 'section', label: 'Section' },
+                  { value: 'page', label: 'Page' },
+                ]}
+              />
+              <button type="button" class={`pp-chip-toggle ${filter.mine ? 'pp-active' : ''}`} aria-pressed={filter.mine} onClick={() => setFilter({ ...filter, mine: !filter.mine })}>
+                Mine
+              </button>
             </div>
           </>
         )}

@@ -36,6 +36,19 @@ Tests: `npx vitest run server` (each test file boots an in-memory app; WebSocket
 | `JOBS` | on | `0` disables background jobs |
 | `LOG` / `LOG_LEVEL` | on / `info` | Logging (the `Authorization` header is redacted) |
 | `WEB_DIR` | `server/public/app` | Built web app served at `/app/` with SPA fallback |
+| `RATE_LIMIT_ENABLED` | `1` | `0` turns rate limiting off (e.g. behind a gateway that already limits) |
+| `RATE_LIMIT_MAX` | `1200` | Requests per window for each signed-in user or API key |
+| `RATE_LIMIT_ANON_MAX` | `120` | Requests per window for each IP without a valid token (sign-in, share pages, invite previews) |
+| `RATE_LIMIT_WINDOW` | `1 minute` | Window length, as text (`"30 seconds"`, `"1 minute"`) or milliseconds |
+| `RATE_LIMIT_AUTH_EMAIL_MAX` | `5` | Sign-in emails per window per IP |
+
+### Rate limiting
+
+Requests are counted per **user or API key**, not per IP, so a team behind one office NAT is never throttled together. The key comes from a local check of the bearer token (HMAC verification of the access token or a hash of the API key — no database query). Requests without a valid token are counted per IP with the lower anonymous limit.
+
+Never counted: `/files/*` (snapshot and attachment downloads), `GET /app/*` (web-app assets), `/api/v1/health`, `/api/v1/config` and WebSocket upgrades.
+
+Every counted response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`; a 429 also carries `Retry-After` and `{"error":{"code":"rate_limited","message":"Too many requests. Please wait 30 seconds and try again."}}`. The shared `ApiClient` waits for `Retry-After` (capped at 5 s) and retries once; if that also fails, the UI shows a calm "Slow down a moment…" toast instead of an error. Limits are kept in memory, so each server instance counts separately.
 
 ## Architecture
 

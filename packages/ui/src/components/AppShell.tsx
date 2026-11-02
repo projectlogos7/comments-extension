@@ -174,6 +174,8 @@ export function Onboarding() {
 
   const create = async () => {
     setBusy(true);
+    // Keep the flow on this route once the new workspace becomes active.
+    host.navigate('/onboarding');
     try {
       const m = await host.api.createWorkspace(name.trim());
       await host.refreshSession();

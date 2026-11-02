@@ -47,7 +47,7 @@ describe('snapshots and files', () => {
     const f = await t.app.inject({ method: 'GET', url: url.pathname + url.search });
     expect(f.statusCode).toBe(200);
     expect(f.headers['content-type']).toBe('image/png');
-    const tampered = await t.app.inject({ method: 'GET', url: url.pathname + url.search.replace(/sig=./, 'sig=X') });
+    const tampered = await t.app.inject({ method: 'GET', url: url.pathname + url.search.replace(/sig=(.)/, (_m, c: string) => `sig=${c === 'X' ? 'Y' : 'X'}`) });
     expect(tampered.statusCode).toBe(404);
     await upload(ana, 'area');
     const d = (await t.req('GET', `/api/v1/threads/${threadId}`, ana)).json;

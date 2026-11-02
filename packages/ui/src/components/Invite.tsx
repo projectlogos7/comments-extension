@@ -9,8 +9,9 @@ const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]{2,}$/;
 export function parseEmails(text: string): string[] {
   return text
     .split(/[\s,;]+/)
-    .map((s) => s.trim().replace(/^<|>$/g, '').toLowerCase())
-    .filter(Boolean);
+    .map((s) => s.trim().replace(/^[<"'(]+|[>"'),.]+$/g, '').toLowerCase())
+    // "Ana Lima <ana@x.com>" pastes: keep the addresses, drop the names.
+    .filter((s) => s.includes('@'));
 }
 
 export function isEmail(s: string) {
@@ -24,8 +25,10 @@ export function EmailChips({ value, onChange, placeholder = 'name@company.com, â
   useEffect(() => {
     if (autoFocus) input.current?.focus();
   }, []);
-  const commit = (text: string) => {
-    const add = parseEmails(text).filter((e) => !value.includes(e));
+  const commit = (text: string, pasted = false) => {
+    // Typed entries are kept even when invalid (so they can be flagged); pasted text may contain names.
+    const list = pasted ? parseEmails(text) : text.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+    const add = [...new Set(list)].filter((e) => !value.includes(e));
     if (add.length) onChange([...value, ...add]);
     setDraft('');
   };
@@ -45,8 +48,10 @@ export function EmailChips({ value, onChange, placeholder = 'name@company.com, â
       })}
       <input
         ref={input}
-        type="email"
-        multiple
+        type="text"
+        inputMode="email"
+        autoComplete="off"
+        spellcheck={false}
         value={draft}
         aria-label="Email addresses to invite"
         placeholder={value.length ? '' : placeholder}
@@ -65,7 +70,7 @@ export function EmailChips({ value, onChange, placeholder = 'name@company.com, â
           const t = e.clipboardData?.getData('text') ?? '';
           if (/[\s,;]/.test(t)) {
             e.preventDefault();
-            commit(draft + t);
+            commit(draft + ' ' + t, true);
           }
         }}
         onBlur={() => draft.trim() && commit(draft)}
@@ -277,7 +282,8 @@ export function InviteButton({ class: cls = 'pp-btn pp-btn-sm' }: { class?: stri
   return (
     <>
       <button type="button" class={cls} onClick={() => setOpen(true)}>
-        <Icon name="userPlus" size={15} /> Invite
+        <Icon name="userPlus" size={15} />
+        <span class="pp-btn-label">Invite</span>
       </button>
       {open && <InviteDialog workspaceId={membership.workspace.id} onClose={() => setOpen(false)} />}
     </>

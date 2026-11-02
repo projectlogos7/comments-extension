@@ -92,7 +92,7 @@ export function AllComments({ workspaceId, threadId, onSelectThread, initialFilt
       return n;
     });
 
-  const filtered = Object.keys(filters).some((k) => k !== 'status');
+  const filtered = Object.keys(filters).some((k) => k !== 'status' && k !== 'q');
   return (
     <div class={`pp-all ${threadId ? 'pp-has-detail' : ''}`}>
       <div class="pp-all-list">
@@ -111,6 +111,7 @@ export function AllComments({ workspaceId, threadId, onSelectThread, initialFilt
           )}
         </div>
         <FiltersBar
+          defaults={initialFilters}
           filters={filters}
           sort={sort}
           members={members}

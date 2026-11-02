@@ -30,10 +30,11 @@ export function SignIn({ host }: { host: ExtensionHost }) {
   return (
     <div class="pp-auth">
       <div class="pp-auth-card">
+        <span class="pp-logo pp-logo-lg" aria-hidden="true" />
         <h1 class="pp-h1">
-          <span class="pp-logo" aria-hidden="true">◉</span> Pinpoint
+          Sign in to Pinpoint
         </h1>
-        <p class="pp-muted pp-small">Sign in to comment on pages with your team.</p>
+        <p class="pp-muted">Comment on any part of a page with your team.</p>
         <button class="pp-btn" disabled={busy} onClick={() => run(async () => (await bg({ type: 'auth.signIn', provider: 'google' }), after()))}>
           Continue with Google
         </button>

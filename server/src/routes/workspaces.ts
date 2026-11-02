@@ -283,7 +283,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance, ctx: AppCtx) {
     const { rows: u } = await ctx.db.query('SELECT email FROM users WHERE id = $1', [userId]);
     const email = u[0].email as string;
     if (inv.kind === 'email') {
-      if (normalizeEmail(inv.email!) !== email) throw forbidden(`This invitation was sent to ${inv.email}. Sign in with that address to accept it.`);
+      if (normalizeEmail(inv.email!) !== email) throw forbidden(`This invitation was sent to ${inv.email}, but you're signed in as ${email}. Sign in with ${inv.email} to accept it.`);
+      if (inv.accepted) {
+        const { rows: m } = await ctx.db.query('SELECT 1 FROM members WHERE workspace_id = $1 AND user_id = $2', [inv.workspaceId, userId]);
+        if (m[0]) return membershipFor(ctx, inv.workspaceId, userId);
+        throw new AppError(410, 'invite_used', 'This invitation has already been used. Ask for a new one.');
+      }
       await joinWorkspace(ctx, { workspaceId: inv.workspaceId, userId, role: inv.role, email, enforceDomain: inv.role !== 'guest' });
       await ctx.db.query('UPDATE invites SET accepted_at = now() WHERE id = $1', [inv.id]);
     } else if (inv.kind === 'link') {
@@ -379,15 +384,17 @@ function toGrant(r: any) {
 async function findInvite(
   ctx: AppCtx,
   token: string,
-): Promise<{ id: string; kind: 'email' | 'link' | 'guest'; workspaceId: string; workspaceName: string; role: Role; email?: string }> {
+): Promise<{ id: string; kind: 'email' | 'link' | 'guest'; workspaceId: string; workspaceName: string; role: Role; email?: string; accepted?: boolean }> {
   if (token.startsWith('inv_')) {
     const { rows } = await ctx.db.query(
       'SELECT i.*, w.name AS ws_name FROM invites i JOIN workspaces w ON w.id = i.workspace_id WHERE i.token = $1 AND i.revoked_at IS NULL',
       [token],
     );
     const r = rows[0];
-    if (!r || r.accepted_at) throw notFound('Invitation');
-    return { id: r.id, kind: 'email', workspaceId: r.workspace_id, workspaceName: r.ws_name, role: r.role, email: r.email };
+    if (!r) throw notFound('Invitation');
+    // Accepted invites stay resolvable so the link keeps working for the person who used it
+    // (sign-in auto-accepts pending invites before the invite page loads).
+    return { id: r.id, kind: 'email', workspaceId: r.workspace_id, workspaceName: r.ws_name, role: r.role, email: r.email, accepted: !!r.accepted_at };
   }
   if (token.startsWith('lnk_')) {
     const { rows } = await ctx.db.query('SELECT id, name FROM workspaces WHERE invite_token = $1', [token]);
