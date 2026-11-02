@@ -1,2 +1,12 @@
-{ "name": "@pinpoint/ui", "version": "0.2.0", "private": true, "type": "module", "main": "src/index.ts",
-  "dependencies": { "@pinpoint/shared": "*", "preact": "10.29.8" } }
+{
+  "name": "@pinpoint/ui",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "dependencies": { "@pinpoint/shared": "*", "preact": "10.29.8" }
+}
