@@ -1,0 +1,29 @@
+{
+  "name": "pinpoint",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Pinpoint — team page annotation for Chromium browsers: extension, backend and web app",
+  "workspaces": [
+    "packages/shared",
+    "packages/ui",
+    "server",
+    "web",
+    "extension"
+  ],
+  "scripts": {
+    "build": "npm run build -w web && npm run build -w extension && npm run build -w server",
+    "dev": "npm run build -w web && npm run dev -w server",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7",
+    "happy-dom": "18.0.1",
+    "@types/node": "22.15.30"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}

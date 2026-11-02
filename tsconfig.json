@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "types": ["node", "chrome"] },
+  "include": ["packages/*/src", "server/src", "server/test", "web/src", "extension/src", "extension/test", "packages/*/test"]
+}

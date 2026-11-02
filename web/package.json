@@ -1,0 +1,8 @@
+{
+  "name": "@pinpoint/web",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs", "watch": "node build.mjs --watch" },
+  "dependencies": { "@pinpoint/shared": "*", "@pinpoint/ui": "*", "preact": "10.29.8" }
+}
