@@ -246,6 +246,7 @@ declare global {
   async function openComposer(sel: Selection) {
     if (!membership || !auth?.me) return;
     const capture = await captureViewport();
+    if (!capture.dataUrl) toast('No snapshot this time: start comment mode from the toolbar, the right-click menu or Alt+Shift+C to include one.', { ms: 5000 });
     const component = sel.elements[0] ? detectComponent(sel.elements[0]).catch(() => null) : Promise.resolve(null);
     const mem = await getMembers();
     mount(
@@ -423,8 +424,9 @@ declare global {
       toast(`No ${COPY_LABELS[format]} available for this thread`, { kind: 'error' });
       return '';
     }
-    const ok = await writeClipboard(text, host?.root);
-    toast(ok ? `${COPY_LABELS[format]} copied` : `Could not copy ${COPY_LABELS[format]}`, { kind: ok ? 'info' : 'error' });
+    // When the request comes from the side panel the page has no focus; the panel copies the returned text itself.
+    const ok = document.hasFocus() ? await writeClipboard(text, host?.root) : false;
+    if (ok) toast(`${COPY_LABELS[format]} copied`);
     return text;
   }
 

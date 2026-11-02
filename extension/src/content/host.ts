@@ -21,7 +21,7 @@ export function createHost(): Host {
   document.querySelectorAll('pinpoint-root').forEach((n) => n.remove());
   const el = document.createElement('pinpoint-root');
   el.setAttribute('data-pinpoint-root', '');
-  el.style.cssText = 'all:initial!important;position:fixed!important;top:0!important;left:0!important;width:0!important;height:0!important;z-index:2147483647!important;display:block!important;contain:layout style!important;';
+  el.style.cssText = 'all:initial!important;position:fixed!important;top:0!important;left:0!important;width:0!important;height:0!important;z-index:2147483647!important;display:block!important;';
   const root = el.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
   style.textContent = CSS;
