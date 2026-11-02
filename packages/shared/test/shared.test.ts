@@ -58,3 +58,18 @@ describe('csv', () => {
     expect(csv).toContain("'=HYPERLINK()");
   });
 });
+
+import { encodeMentions, decodeMentions, activeMentionQuery, insertMention } from '@pinpoint/shared';
+describe('mentions', () => {
+  const people = [{ id: 'u1', name: 'Ana' }, { id: 'u2', name: 'Ana Lopez' }];
+  it('round-trips', () => {
+    const body = encodeMentions('hi @Ana Lopez and @ana, not @Anastasia', people);
+    expect(body).toBe('hi @[Ana Lopez](u2) and @[Ana](u1), not @Anastasia');
+    expect(decodeMentions(body)).toBe('hi @Ana Lopez and @Ana, not @Anastasia');
+  });
+  it('finds the typed query and inserts', () => {
+    expect(activeMentionQuery('hey @an', 7)).toEqual({ query: 'an', start: 4 });
+    expect(activeMentionQuery('mail a@b', 8)).toBeNull();
+    expect(insertMention('hey @an', 7, 'Ana Lopez')).toEqual({ text: 'hey @Ana Lopez ', caret: 15 });
+  });
+});

@@ -6,3 +6,4 @@ export * from './export';
 export * from './api';
 export * from './messages';
 export * from './env';
+export * from './mentions';
